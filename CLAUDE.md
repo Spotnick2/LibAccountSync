@@ -7,9 +7,10 @@ Battle.net account, and receive them, with ownership proven first. Single owner 
 **Status: `r2` released** (tag on `fdd4a72`, MINOR 2), validated by GlassChat's two-account pilot
 (#4). MINOR 1 was never tagged: its pilot copy, `cc92deb`, failed the first in-game check (#4) and
 is frozen in `tests/fixtures/` because GlassChat's pilot embedded it; `r2` is frozen there too.
-**Still owed (#1, owner decision 2026-10-05):** the `docs/PLAN.md` §7 probe measurements, the §7.9
-relay gate first (with a Battle.net friend); a positive §7.9 brings the deferred relay protections
-into the next MINOR. `docs/PLAN.md` is the reviewed design (two internal rounds plus
+Seven of the ten `docs/PLAN.md` §7 measurements are done (#1). **Still owed (#9):** the §7.9 relay
+gate (needs a Battle.net friend as the test subject; a positive result brings the deferred relay
+protections into the next MINOR), §7.3 and §7.7. **Follow-ups:** #7 (project and region from the
+client), #8 (SHA-256 cost per Send). Scope (owner, 2026-10-05): same-Battle.net-account sync only. `docs/PLAN.md` is the reviewed design (two internal rounds plus
 Codex round 3); **this is security code: a mistake hands a stranger the player's lists**, so any
 change to ownership, the proof, the MAC, the stores or the wire goes back through the plan and an
 adversarial review first.

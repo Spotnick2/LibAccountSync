@@ -6,9 +6,8 @@ with ownership proven before anything is sent or accepted.
 
 Embedded with LibStub; players don't install it separately.
 
-> **Status:** r1 implemented and unit-tested; the two-account in-game check (docs/PLAN.md §7)
-> comes before the first tag, `r2` (`r1` was never tagged: its pilot copy failed in game, #4).
-> GlassChat is the pilot consumer.
+> **Status:** `r2` released, validated in game by GlassChat's two-account pilot. (`r1` was never
+> tagged: its pilot copy failed in game, #4.) GlassChat is the pilot consumer.
 
 ## Using it
 

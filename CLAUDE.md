@@ -4,11 +4,12 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
-**Status: MINOR 2 implemented** (#1, #4), unit- and mutation-tested. MINOR 1 was never tagged
-(its pilot copy, `cc92deb`, failed the first in-game check: #4; it is frozen in `tests/fixtures/`
-because GlassChat's pilot embedded it). Next: GlassChat embeds it by
-`commit:` (pilot), the two-account in-game check of `docs/PLAN.md` §7 with the probe, then the
-`r2` tag (EMBEDDED-LIBRARIES §9). `docs/PLAN.md` is the reviewed design (two internal rounds plus
+**Status: `r2` released** (tag on `fdd4a72`, MINOR 2), validated by GlassChat's two-account pilot
+(#4). MINOR 1 was never tagged: its pilot copy, `cc92deb`, failed the first in-game check (#4) and
+is frozen in `tests/fixtures/` because GlassChat's pilot embedded it; `r2` is frozen there too.
+**Still owed (#1, owner decision 2026-10-05):** the `docs/PLAN.md` §7 probe measurements, the §7.9
+relay gate first (with a Battle.net friend); a positive §7.9 brings the deferred relay protections
+into the next MINOR. `docs/PLAN.md` is the reviewed design (two internal rounds plus
 Codex round 3); **this is security code: a mistake hands a stranger the player's lists**, so any
 change to ownership, the proof, the MAC, the stores or the wire goes back through the plan and an
 adversarial review first.

@@ -173,6 +173,22 @@ do
     eq(lib.state.theirNonce[3], B.nonce, "  and matches an older peer's first-name hello by GUID")
 end
 
+-- 4d. Released copies are frozen as fixtures (EMBEDDED-LIBRARIES §8, §9.4).
+--     While the source still says MINOR 2 it must BE r2: a behaviour change
+--     raises MINOR first, and the next upgrade test then loads r2 under it.
+do
+    local frozen = (readFile("tests/fixtures/LibAccountSync-r2.lua"):gsub("\r\n", "\n"))
+    -- Not under tests/mutate.lua: every mutant differs from r2, which would
+    -- turn each one red here and hide the mutations nothing else catches.
+    if MINOR == 2 and not os.getenv("LIBACCT_MUTANT") then
+        check(runtimeSource() == frozen, "MINOR 2 is the released r2, byte for byte (raise MINOR to change it)")
+    end
+    WoW.reset(); WoW.resetLibStub()
+    local lib = loadCopy(fixtureCopy("LibAccountSync-r2.lua"), "GlassChat")
+    eq(select(2, LibStub:GetLibrary(MAJOR)), 2, "the r2 fixture loads as MINOR 2")
+    eq(lib.ready, 2, "  complete")
+end
+
 -- 5. The completion marker is the last line, and MINOR is written once.
 do
     local src = runtimeSource()

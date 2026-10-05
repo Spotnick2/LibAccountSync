@@ -82,8 +82,10 @@ local M = {
         { "    elseif now and S.myNonce[id] and buf.mac then",
           "    elseif now then\n        sender = now\n    elseif now and S.myNonce[id] and buf.mac then" } } },
     { "an unbound stream is not delivered once verified", {
-        { 'elseif now and now.proven == "bnet" and (not was or was.guid == now.guid) then',
-          'elseif now and now.proven == "bnet" and was and was.guid == now.guid then' } } },
+        { 'elseif now and now.proven == "bnet" and (buf.prior == nil or buf.prior == now.guid) then',
+          'elseif now and now.proven == "bnet" and buf.prior ~= nil and buf.prior == now.guid then' } } },
+    { "a known sender gone blank counts as first contact", {
+        { "                prior = (p and p.guid) or S.lastGuid[id] }", "                prior = p and p.guid }" } } },
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },

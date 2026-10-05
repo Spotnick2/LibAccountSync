@@ -82,7 +82,8 @@ local FUNCTIONS = { "Send", "OnMessage", "Peers", "Rescan", "SetEnabled", "IsEna
 --------------------------------------------------------------------------------
 
 local STATE_TABLES = { "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
-                       "finished", "refused", "floors", "routeChecked", "reported", "proofChecks", "pendingKeys" }
+                       "finished", "refused", "floors", "routeChecked", "reported", "proofChecks", "pendingKeys",
+                       "lastGuid" }
 for _, k in ipairs(STATE_TABLES) do
     if S[k] == nil then S[k] = {} end
 end
@@ -703,7 +704,7 @@ end
 
 function I.WipeSession()
     for _, k in ipairs({ "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
-                         "routeChecked", "proofChecks", "pendingKeys" }) do
+                         "routeChecked", "proofChecks", "pendingKeys", "lastGuid" }) do
         wipe(S[k])
     end
 end
@@ -899,6 +900,7 @@ function I.OnHello(id, text)
         return
     end
     S.peers[id] = peer
+    S.lastGuid[id] = peer.guid
     -- Answered even for a peer we know: it may have reloaded and forgotten us.
     I.SendHello(id, "answer")
     I.RecheckAwaiting(id)
@@ -979,6 +981,7 @@ function I.Scan()
     wipe(S.peers)
     for id, p in pairs(fresh) do
         S.peers[id] = p
+        S.lastGuid[id] = p.guid
         -- A hello to a new binding, or one whose nonce we still lack (as
         -- AltStable's OnNewPresence): not to every peer every minute.
         if not known[id] or not S.theirNonce[id] then I.SendHello(id) end
@@ -1160,7 +1163,10 @@ function I.OnData(id, text)
         end
         if perId >= STREAMS_PER_ID or total >= STREAMS_TOTAL then S.refused[key] = time(); return end
         buf = { id = id, tag = tag, sid = tonumber(sid), sidText = sid, n = n, chunks = {}, have = 0,
-                bytes = 0, last = time(), verified = p and p.proven == "bnet", peer = p }
+                bytes = 0, last = time(), verified = p and p.proven == "bnet", peer = p,
+                -- The character this id was last bound to this session, even
+                -- if its presence is blank right now (Codex r1 round 4).
+                prior = (p and p.guid) or S.lastGuid[id] }
         S.buffers[key] = buf
         I.ArmSettle(key, buf)
     end
@@ -1227,10 +1233,12 @@ function I.TryDeliver(key, buf)
         -- it is still the one there (or has logged out since: send, then log
         -- out, still delivers).
         sender = now or was
-    elseif now and now.proven == "bnet" and (not was or was.guid == now.guid) then
-        -- Verified now, and either unbound when the stream began (a blank
-        -- first contact: no earlier character's floor to slip under) or
-        -- guessed then as this same character (§5.3, Codex r1 round 3).
+    elseif now and now.proven == "bnet" and (buf.prior == nil or buf.prior == now.guid) then
+        -- Verified now, and either a genuine first contact (no character was
+        -- ever bound to this id this session: no floor to slip under) or the
+        -- same character it was last bound to (§5.3; Codex r1 rounds 3, 4).
+        -- A known sender gone blank keeps its prior GUID, so a different
+        -- character now goes through the MAC below.
         sender = now
     elseif now and S.myNonce[id] and buf.mac then
         -- Anything else (a character change on that account since the stream

@@ -174,6 +174,23 @@ do
     eq(box[1] and box[1].sender.proven, "bnet", "  as verified by Battle.net")
 end
 
+-- 7b''. A known sender whose presence goes blank: its older stream, admitted
+--       while blank, is not delivered as the character that replaces it
+--       (Codex, r1 round 4). First contact (7b') still delivers.
+do
+    local lib, inst, store, A = verified()
+    local box = inbox(inst)
+    A:send("GlassChat", "A newer", { sid = "1760000000002" })
+    eq(#box, 1, "A's newer snapshot lands")
+    A:setBlank(true)
+    local old = A:frames("GlassChat", string.rep("o", 400), { sid = "1760000000001" })
+    for _, f in ipairs(old) do A:deliver(f) end
+    local Bc = Peer.new({ id = 3, name = "Bravo", guid = "Player-1-000000B2", nonce = "b2b2b2b2b2b2b2b2" })
+    Bc:deliver(Bc:hello({ key = OTHER_KEY }))
+    WoW.advance(11)
+    eq(#box, 1, "A's older stream is not delivered as B")
+end
+
 -- 7c. A new character on a blank account we had learned: its stream fails the
 --     MAC against the stale binding and waits for its hello, not refused.
 do

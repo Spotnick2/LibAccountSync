@@ -163,7 +163,11 @@ local function bnSelf()
     if WoW.bn.blank then
         return { gameAccountID = WoW.bn.myId, isOnline = true, clientProgram = "WoW", isInCurrentRegion = true }
     end
-    local whole = WoW.player.surname and (WoW.player.name .. " " .. WoW.player.surname) or WoW.player.name
+    -- Battle.net's whole name, by the same rule the library reads UnitName.
+    local whole = WoW.player.name
+    if not whole:find(" ", 1, true) and type(WoW.player.surname) == "string" then
+        whole = whole .. " " .. WoW.player.surname
+    end
     return { gameAccountID = WoW.bn.myId, characterName = whole, playerGuid = WoW.player.guid,
              isOnline = true, clientProgram = "WoW", wowProjectID = WoW.bn.project, regionID = WoW.bn.region,
              isInCurrentRegion = true, factionName = WoW.player.faction, realmName = WoW.player.realm }

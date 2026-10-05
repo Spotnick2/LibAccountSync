@@ -60,7 +60,6 @@ local M = {
     { "a scan flag stays set when not ready", {
         { "        S.scanPending = false\n        if not Ready() then return end", "        if not Ready() then return end\n        S.scanPending = false" } } },
     { "the prefix result is ignored", { { "(r == nil or r == true or r == 0)", "true" } } },
-    { "a suffixed name is accepted", { { ' or name:find("-", 1, true)', '' } } },
     { "a trusted store key is never replaced", { { " or (t.key ~= S.key and union[t.key])", "" } } },
     { "the prefix compared before the secret check", {
         { "if IsSecret(prefix) or IsSecret(text) or IsSecret(senderID) or prefix ~= PREFIX then",
@@ -69,15 +68,9 @@ local M = {
         { "    if was and was.proven == \"bnet\" and (not now or now.guid == was.guid) then",
           "    if now and now.proven == \"bnet\" then" } } },
     { "a stale hello's nonce is kept", {
-        { "    if g and (Short(g.characterName) ~= Short(name) or (guid ~= \"\" and guid ~= g.playerGuid)) then return end\n", "" } } },
+        { "    if g and guid ~= g.playerGuid then return end\n", "" } } },
     { "a late store is not synced", { { "    if I.OwnKey() then I.SyncStores() end", "    I.OwnKey()" } } },
     { "the store's switch wins over the session's", { { "    if inst.enabled ~= nil then return inst.enabled end\n", "" } } },
-    { "a hello contradicting Battle.net is kept", {
-        { 'if g and (Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid)) then return end',
-          'if g and (guid ~= "" and guid ~= g.playerGuid) then return end' } } },
-    { "a hello's GUID is not checked", {
-        { 'if g and (Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid)) then return end',
-          'if g and (Short(g.characterName) ~= Short(name)) then return end' } } },
     { "a proven peer passes without a MAC", {
         { "    elseif now and S.myNonce[id] and buf.mac then",
           "    elseif now then\n        sender = now\n    elseif now and S.myNonce[id] and buf.mac then" } } },
@@ -93,6 +86,17 @@ local M = {
         { "                prior = (p and p.guid) or S.lastGuid[id] }", "                prior = p and p.guid }" } } },
     { "our hello carries only the first name", {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then\n        return name .. " " .. second\n    end\n', '' } } },
+    { "a verified hello matched by name", {
+        { "    if g and guid ~= g.playerGuid then return end",
+          "    if g and Short(g.characterName) ~= Short(name) then return end" } } },
+    { "a verified hello with no GUID passes", {
+        { "    if g and guid ~= g.playerGuid then return end", "    if g and guid ~= \"\" and guid ~= g.playerGuid then return end" } } },
+    { "the proof name is cut at a hyphen", {
+        { "    return name:lower()\n", "    local s = name:match(\"^([^%-]+)\")\n    return s and s:lower() or nil\n" } } },
+    { "a whole first return is glued to the second", { { '    if name:find(" ", 1, true) then return name end\n', '' } } },
+    { "a secret surname is concatenated", {
+        { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
+          '    if second ~= nil and second ~= "" then' } } },
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },

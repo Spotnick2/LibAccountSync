@@ -229,12 +229,12 @@ local function IsGuid(s) return type(s) == "string" and #s <= 64 and s:find("^Pl
 -- A name or realm as the hello carries it: present, no delimiter, bounded.
 local function IsField(s, max) return type(s) == "string" and #s <= max and not s:find("[|%z]") end
 
--- Short name: lower-cased, any "-Realm" suffix dropped (names are unique
--- across the region on Forever, SYNC-DISCOVERY "Names are unique").
+-- The name as the proof binds it: the whole name, lower-cased (§5.1). Not
+-- cut at "-": a surname may hold one, and an altered "-suffix" must change
+-- the proof (#4 review).
 local function Short(name)
     if type(name) ~= "string" then return nil end
-    local s = name:match("^([^%-]+)")
-    return s and s:lower() or nil
+    return name:lower()
 end
 
 -- \0 cannot travel; the escape byte must escape itself. Applied to the whole
@@ -794,7 +794,10 @@ function I.SendHello(id, how)
     if not ctl then return end
     local realm = Plain(GetRealmName()) or ""
     local faction = Plain((UnitFactionGroup("player"))) or ""
-    if not IsField(name, 48) or not IsField(realm, 64) or not IsField(faction, 16) then return end
+    if not IsField(name, 96) or not IsField(realm, 64) or not IsField(faction, 16) then
+        I.ReportOnce("hellofields", "LibAccountSync: our name or realm can't travel in a hello; nothing is sent.", "error")
+        return
+    end
     -- The household key goes only to an id Battle.net verifies as ours.
     local key = I.OwnAccountGame(id, me) and K or ""
     local nonce = I.NonceFor(id)
@@ -853,7 +856,7 @@ function I.OnHello(id, text)
     local f = Fields(text, 9)
     local name, guid, faction, realm, key, nonce, proof = f[3], f[4], f[5], f[6], f[7], f[8], f[9]
     if not IsDigits(f[2], 3) then return end
-    if not IsField(name, 48) or name == "" or name:find("-", 1, true)
+    if not IsField(name, 96) or name == ""
         or not IsField(faction or "", 16) or not IsField(realm or "", 64) then
         return
     end
@@ -863,6 +866,7 @@ function I.OnHello(id, text)
     if key ~= "" and not ValidKey(key) then return end
     if proof ~= "" and not IsHex(proof, 32) then return end
     if guid ~= "" and not IsGuid(guid) then return end
+    if guid ~= "" and guid == PlayerGuid() then return end        -- our own echo
     if Short(name) == Short(PlayerName()) then return end         -- our own name
     if nonce == S.myNonce[id] then return end                     -- reflection
     local me = I.Self()
@@ -870,7 +874,10 @@ function I.OnHello(id, text)
     -- Battle.net knows them: the hello must agree with it, checked BEFORE
     -- anything is kept (a delayed hello from the character that was there
     -- before must not replace the current one's nonce, Codex round 2 of r1).
-    if g and (Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid)) then return end
+    -- Matched by GUID, never by display name: names differ in format between
+    -- UnitName and Battle.net (#4: the surname), and an older copy sends only
+    -- the first name. The GUID is the same everywhere.
+    if g and guid ~= g.playerGuid then return end
     local friends = not g and I.FriendGameIDs() or nil
     local hinted = not g and I.OwnByElimination(id, me, friends)
     -- Their nonce is kept only from an id that is ours, a hint, or proven

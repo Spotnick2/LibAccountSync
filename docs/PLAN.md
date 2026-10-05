@@ -354,8 +354,9 @@ never data.
 
 **The household key:**
 - It is sent **only** to an id `OwnAccountGame` verifies.
-- It is adopted only from a hello by such an id whose `name` matches Battle.net's `characterName`
-  (`Core.lua` 3484-3489).
+- It is adopted only from a hello by such an id whose `guid` matches Battle.net's `playerGuid`.
+  AltStable matched by name (`Core.lua` 3484-3489); the library matches by GUID, because names
+  differ in format between `UnitName` and Battle.net (the surname, #4) and the GUID does not.
 
 **Blank presences:**
 - A hello from a blank id is believed only if it carries a trusted key, or a valid proof.

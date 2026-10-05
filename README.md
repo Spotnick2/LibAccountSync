@@ -6,8 +6,10 @@ with ownership proven before anything is sent or accepted.
 
 Embedded with LibStub; players don't install it separately.
 
-> **Status:** `r2` released, validated in game by GlassChat's two-account pilot. (`r1` was never
-> tagged: its pilot copy failed in game, #4.) GlassChat is the pilot consumer.
+> **Status:** `r2` released, and its two-account pairing and sync validated in game by GlassChat's
+> pilot. (`r1` was never tagged: its pilot copy failed in game, #4.) **Still owed** (#1): the
+> `docs/PLAN.md` §7 measurements, among them the §7.9 relay check and the §7.4 hash cost (already
+> about 150 ms per 16 KB in desktop Lua). GlassChat is the pilot consumer.
 
 ## Using it
 

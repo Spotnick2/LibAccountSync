@@ -94,8 +94,10 @@ pwsh tests/run.ps1                                       # luac -p + every tests
 - **Every new test is mutation-tested**: add its mutation to `tests/mutate.lua` and see it red.
   The control run must be green; a mutation that no longer applies must be fixed, not dropped.
 - Upgrade tests use a synthetic newer copy, plus the frozen `cc92deb` pilot copy (MINOR 1) loaded
-  before the current one; from `r2` on, freeze each released copy as
-  `tests/fixtures/LibAccountSync-rN.lua` (EMBEDDED-LIBRARIES §8).
+  before the current one. **Each release** adds `tests/fixtures/LibAccountSync-rN.lua` and
+  `LibAccountSync-rN.manifest` (SHA-256 of every shipped file, LF-normalised) and appends N to
+  `RELEASED` in `test_upgrade.lua` 4d, which loads every release under the current copy and fails
+  if a released MINOR's files change (EMBEDDED-LIBRARIES §8, §9).
 
 ## Conventions (sibling addons')
 

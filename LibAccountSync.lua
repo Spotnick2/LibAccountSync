@@ -1227,8 +1227,11 @@ function I.TryDeliver(key, buf)
         -- it is still the one there (or has logged out since: send, then log
         -- out, still delivers).
         sender = now or was
-    elseif now and now.proven == "bnet" and was and was.guid == now.guid then
-        sender = now                      -- guessed then, verified now: the same character
+    elseif now and now.proven == "bnet" and (not was or was.guid == now.guid) then
+        -- Verified now, and either unbound when the stream began (a blank
+        -- first contact: no earlier character's floor to slip under) or
+        -- guessed then as this same character (§5.3, Codex r1 round 3).
+        sender = now
     elseif now and S.myNonce[id] and buf.mac then
         -- Anything else (a character change on that account since the stream
         -- began, a binding we only guessed) is decided by the MAC, bound to the

@@ -159,6 +159,21 @@ do
     eq(box[1] and box[1].payload, "waited", "delivered once Battle.net verifies the sender")
 end
 
+-- 7b'. The same on first contact: no key learned yet, so no MAC can be
+--      checked, and Battle.net's word alone delivers it (Codex, r1 round 3).
+do
+    local lib, inst, store = session()
+    local box = inbox(inst)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()                            -- a hint: our nonce goes to B
+    B:send("GlassChat", "first contact")
+    eq(#box, 0, "nothing while the sender is blank and unproven")
+    B:setBlank(false)
+    WoW.advance(11)
+    eq(box[1] and box[1].payload, "first contact", "delivered once Battle.net verifies the sender, with no key trusted")
+    eq(box[1] and box[1].sender.proven, "bnet", "  as verified by Battle.net")
+end
+
 -- 7c. A new character on a blank account we had learned: its stream fails the
 --     MAC against the stale binding and waits for its hello, not refused.
 do

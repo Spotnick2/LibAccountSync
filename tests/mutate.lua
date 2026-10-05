@@ -81,6 +81,9 @@ local M = {
     { "a proven peer passes without a MAC", {
         { "    elseif now and S.myNonce[id] and buf.mac then",
           "    elseif now then\n        sender = now\n    elseif now and S.myNonce[id] and buf.mac then" } } },
+    { "an unbound stream is not delivered once verified", {
+        { 'elseif now and now.proven == "bnet" and (not was or was.guid == now.guid) then',
+          'elseif now and now.proven == "bnet" and was and was.guid == now.guid then' } } },
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },

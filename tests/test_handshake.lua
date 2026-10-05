@@ -255,6 +255,38 @@ do
     eq(names(inst), "", "forgotten once its account goes offline")
 end
 
+-- 14b. A peer proven earlier this session that reloads (a new nonce, no
+--      proof yet) is answered, even while our friends list fails closed: it
+--      needs our nonce and proof back to believe us again.
+do
+    local store = seasoned()
+    local lib, inst = session(store)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()
+    B:deliver(B:hello())
+    eq(names(inst), "Karuzo:proof", "proven while blank")
+    WoW.bn.friends = { { 9 } }
+    WoW.bn.friendInfoNil = true             -- the list now fails closed: no hints
+    WoW.advance(120)
+    B.nonce = "abababababababab"            -- B reloaded
+    local n = #sentTo(3, "H1|")
+    B:deliver(B:hello({ proof = "" }))
+    eq(#sentTo(3, "H1|"), n + 1, "the reloaded peer is answered")
+    local ours = B:ourHello()
+    eq(ours.proof, proofFor(store.key, B.nonce, ours.nonce, "Malas", WoW.player.guid, WoW.player.realm, 18, 90),
+       "  with our proof over its new nonce")
+end
+
+-- 14c. Proof checks are bounded per id (each costs up to 16 HMACs).
+do
+    local store = seasoned()
+    local lib, inst = session(store)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()
+    for i = 1, 30 do B:deliver(B:hello({ proof = ("%032x"):format(i), nonce = ("%016x"):format(i) })) end
+    eq(lib.state.proofChecks[3].count, 12, "at most 12 proof checks a minute per id")
+end
+
 -- 15. Our presence blank and our game never seen: fail closed, no hellos.
 do
     local lib, inst, store = session(nil, { before = function() WoW.bn.blank = true end })

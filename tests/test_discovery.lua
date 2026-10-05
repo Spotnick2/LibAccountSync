@@ -87,4 +87,19 @@ do
     eq(V:ourHello().key, store.key, "a verified id gets it")
 end
 
+-- 8. A hinted id whose presence fills in as a friend's loses our nonce, and
+--    with it the right to have frames buffered.
+do
+    local store = { key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", keyAt = 1, selfProject = 18, selfRegion = 90, selfAt = 1 }
+    local lib, inst = session(store)
+    local F = Peer.new({ id = 9, name = "Friend", guid = "Player-1-0000000F", blank = true, bnet = 77 })
+    inst.Rescan()
+    check(lib.state.myNonce[9] ~= nil, "a blank id ours by elimination is given a nonce")
+    F:setBlank(false)                       -- it was a friend logging in
+    inst.Rescan()
+    eq(lib.state.myNonce[9], nil, "once it shows as a friend's, the nonce goes")
+    F:send("GlassChat", "x")
+    eq(next(lib.state.buffers), nil, "  and its frames are not buffered")
+end
+
 done("test_discovery")

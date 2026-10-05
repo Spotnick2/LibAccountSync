@@ -45,6 +45,14 @@ local M = {
                                               "I.SendHello(id)" } } },
     { "a stranger's frames are remembered", { { "if not p and not S.myNonce[id] then return end",
                                                 "if not p and not S.myNonce[id] then S.refused[key] = time(); return end" } } },
+    { "a reloaded learned peer is not answered", {
+        { "if fresh and (hinted or S.learned[id]) then I.SendHello(id, \"answer\") end",
+          "if fresh and hinted then I.SendHello(id, \"answer\") end" } } },
+    { "proof checks unbounded", { { "IsGuid(guid)\n            and I.ProofBudget(id) then", "IsGuid(guid) then" } } },
+    { "a former hint keeps its nonce", { { "        if not fresh[id] and not hinted[id] then I.ForgetId(id) end", "" } } },
+    { "a trusted key can be chosen as ours", { { ' and not I.TrustUnion(stores)[k] then', ' then' } } },
+    { "a waiting stream is not rechecked on settle", {
+        { "        if I.TryDeliver(key, buf) then return end          -- Battle.net may vouch for it now\n", "" } } },
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },
@@ -69,7 +77,7 @@ local M = {
                                        'local floorKey = buf.tag .. "|" .. tostring(buf.id)' } } },
     { "no sid floor", { { "if S.floors[floorKey] and buf.sid <= S.floors[floorKey] then return true end", "" } } },
     { "lastSid not read back from the store", {
-        { 'if type(t.lastSid) == "number" and t.lastSid > lastSid then lastSid = t.lastSid end', "" } } },
+        { 'if type(t.lastSid) == "number" and t.lastSid > lastSid and t.lastSid < 1e13 then lastSid = t.lastSid end', "" } } },
     -- Framing and caps (§2, §5.2)
     { "the data body is split on |", { { '|([^|]*)|([^|]*)|(.*)$")', '|([^|]*)|([^|]*)|([^|]*)")' } } },
     { "no chunk cap", { { "if i < 1 or i > n or n > MAX_CHUNKS then return end", "if i < 1 or i > n then return end" } } },

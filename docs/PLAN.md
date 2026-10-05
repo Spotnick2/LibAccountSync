@@ -429,8 +429,9 @@ cut to 32 hex, on chunk 1.
     out "because it saw the receiver as verified" would have its streams dropped silently
     whenever the two presences differ (found in round 2).
 - **The receiver decides at completion, not at the first frame:**
-  - a sender **verified by Battle.net at completion** is accepted, MAC unchecked: Blizzard vouches
-    for the id;
+  - a sender **verified by Battle.net when the stream was admitted or at completion** is accepted,
+    MAC unchecked: Blizzard vouches for the id, and a binding change wipes that id's buffers (r1:
+    this lets a sender who sends and logs out still be delivered, as §1 promises);
   - any other sender is delivered only if it has a **proven hello at completion** and the MAC
     verifies under a trusted key with **our current nonce for that id**;
   - a sender that isn't verified may fill a buffer only if we have sent that id our nonce. The

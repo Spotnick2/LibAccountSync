@@ -144,6 +144,21 @@ for _, case in ipairs({ { "every chunk before the hello", 1000, "all" },
     eq(box[1] and box[1].payload, payload, case[1] .. ": delivered once the hello lands")
 end
 
+-- 7b. A complete stream waiting for its hello is delivered if Battle.net
+--     starts vouching for the sender meanwhile (its presence fills in).
+do
+    local store = seasoned()
+    local lib, inst = session(store)
+    local box = inbox(inst)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()
+    B:send("GlassChat", "waited")
+    eq(#box, 0, "nothing while the sender is unproven")
+    B:setBlank(false)
+    WoW.advance(10)
+    eq(box[1] and box[1].payload, "waited", "delivered once Battle.net verifies the sender")
+end
+
 -- 8. A complete stream whose hello never comes is dropped after 10 s.
 do
     local store = seasoned()
@@ -300,6 +315,18 @@ do
     eq(next(lib.state.buffers), nil, "  nor buffered")
     for k = 1, 50 do F:send("GlassChat", "flood", { sid = tostring(1760000000100 + k) }) end
     eq(next(lib.state.refused), nil, "  nor remembered: a stranger's flood grows nothing")
+end
+
+-- 17b. A host's onResult that rescans mid-Send: every peer still reported once.
+do
+    local lib, inst, store, B = verified()
+    Peer.new({ id = 4, name = "Two", guid = "Player-1-00000004" })
+    Peer.new({ id = 5, name = "Three", guid = "Player-1-00000005" })
+    inst.Rescan()                            -- 4 and 5 bound, no nonce yet
+    local seen = {}
+    inst.Send("x", function(sender) seen[#seen + 1] = sender.name; inst.Rescan() end)
+    table.sort(seen)
+    eq(table.concat(seen, ","), "Karuzo,Three,Two", "each peer reported exactly once")
 end
 
 -- 18. Waiting sends: ChatThrottleLib holding frames, reported only when the

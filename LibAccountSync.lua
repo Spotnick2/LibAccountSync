@@ -59,6 +59,7 @@ local MAX_MESSAGE = 255
 local MAX_ID = 128                     -- the local game account id walk
 local HELLO_EVERY, HELLO_FLOOR = 60, 5 -- seconds between hellos to one id
 local ANSWERS_PER_MINUTE = 6           -- answers to new nonces, per id
+local PROOF_CHECKS_PER_MINUTE = 12     -- proof verifications (up to 16 HMACs each), per id
 local FRIENDS_SETTLE = 60              -- seconds after Battle.net comes up
 local SETTLING_EVERY, SETTLING_TRIES = 10, 30
 local STREAM_SETTLE = 6                -- seconds with no chunk drops a stream
@@ -81,7 +82,7 @@ local FUNCTIONS = { "Send", "OnMessage", "Peers", "Rescan", "SetEnabled", "IsEna
 --------------------------------------------------------------------------------
 
 local STATE_TABLES = { "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
-                       "finished", "refused", "floors", "routeChecked", "reported" }
+                       "finished", "refused", "floors", "routeChecked", "reported", "proofChecks" }
 for _, k in ipairs(STATE_TABLES) do
     if S[k] == nil then S[k] = {} end
 end
@@ -367,7 +368,9 @@ function I.OwnKey()
     local best, bestAt
     for _, t in ipairs(stores) do
         local k, at = t.key, t.keyAt
-        if ValidKey(k) and type(at) == "number" then
+        -- A key we trust is another account's (a shared-key split moved it
+        -- there): never ours again, even where a read-only store keeps it.
+        if ValidKey(k) and type(at) == "number" and not I.TrustUnion(stores)[k] then
             if not best or at < bestAt or (at == bestAt and k < best) then best, bestAt = k, at end
         end
     end
@@ -386,7 +389,8 @@ function I.SyncStores()
     local union = I.TrustUnion(stores)
     local lastSid = S.lastSid
     for _, t in ipairs(stores) do
-        if type(t.lastSid) == "number" and t.lastSid > lastSid then lastSid = t.lastSid end
+        -- 13 digits at most: a corrupt value must not push frames past the wire shape.
+        if type(t.lastSid) == "number" and t.lastSid > lastSid and t.lastSid < 1e13 then lastSid = t.lastSid end
     end
     S.lastSid = lastSid
     for _, t in ipairs(stores) do
@@ -682,7 +686,7 @@ end
 -- Battle.net contradicts it. Whoever comes back proves itself afresh.
 function I.ForgetId(id)
     S.learned[id], S.helloSent[id], S.myNonce[id], S.theirNonce[id] = nil, nil, nil, nil
-    S.answered[id] = nil
+    S.answered[id], S.proofChecks[id] = nil, nil
     S.routeChecked[id] = nil
     for key, buf in pairs(S.buffers) do
         if buf.id == id then S.buffers[key] = nil end
@@ -691,7 +695,7 @@ end
 
 function I.WipeSession()
     for _, k in ipairs({ "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
-                         "routeChecked" }) do
+                         "routeChecked", "proofChecks" }) do
         wipe(S[k])
     end
 end
@@ -790,6 +794,16 @@ local function Fields(text, max)
     return out
 end
 
+-- Each proof check costs up to TRUST_CAP HMACs: bounded per id, as answers are.
+function I.ProofBudget(id)
+    local now = time()
+    local b = S.proofChecks[id]
+    if not b or (now - b.since) >= 60 then b = { since = now, count = 0 }; S.proofChecks[id] = b end
+    if b.count >= PROOF_CHECKS_PER_MINUTE then return false end
+    b.count = b.count + 1
+    return true
+end
+
 function I.OnHello(id, text)
     local f = Fields(text, 9)
     local name, guid, faction, realm, key, nonce, proof = f[3], f[4], f[5], f[6], f[7], f[8], f[9]
@@ -827,7 +841,8 @@ function I.OnHello(id, text)
         local via, how
         if key ~= "" and I.KeyTrusted(key) then
             via, how = key, "key"
-        elseif proof ~= "" and S.myNonce[id] and me and me.project and me.region and IsGuid(guid) then
+        elseif proof ~= "" and S.myNonce[id] and me and me.project and me.region and IsGuid(guid)
+            and I.ProofBudget(id) then
             for k in pairs(I.TrustUnion()) do
                 if I.Proof(k, S.myNonce[id], nonce, name, guid, realm, me.project, me.region) == proof then
                     via, how = k, "proof"
@@ -836,6 +851,13 @@ function I.OnHello(id, text)
             end
         end
         if via and IsGuid(guid) and guid ~= PlayerGuid() then
+            if S.learned[id] and S.learned[id].guid ~= guid then
+                -- Another character now: the old one's buffers go. Our nonce
+                -- stays, since the proof just answered it and MACs need it.
+                local mine = S.myNonce[id]
+                I.ForgetId(id)
+                S.myNonce[id] = mine
+            end
             I.Trust(via)                                           -- refresh lastSeen
             S.theirNonce[id] = nonce
             S.learned[id] = { name = name, guid = guid, faction = faction ~= "" and faction or nil,
@@ -846,7 +868,9 @@ function I.OnHello(id, text)
     if not peer then
         -- Not proven yet. A hint: answer its nonce; our proof is what lets it
         -- believe us, and its next hello answers ours.
-        if fresh and hinted then I.SendHello(id, "answer") end
+        -- A peer proven earlier this session that reloaded is answered too,
+        -- or it never gets our nonce while the friends list fails closed.
+        if fresh and (hinted or S.learned[id]) then I.SendHello(id, "answer") end
         return
     end
     S.peers[id] = peer
@@ -891,12 +915,13 @@ function I.Scan()
     local me = I.Self()
     local settling = not me or me.project == nil or me.region == nil
     local friends = I.FriendGameIDs()
-    local fresh = {}
+    local fresh, hinted = {}, {}
     for id = 1, MAX_ID do
         local p = I.GameFor(id, me, friends)
         if p then
             fresh[id] = p
         elseif I.OwnByElimination(id, me, friends) then
+            hinted[id] = true
             I.SendHello(id)
             settling = true
         elseif not settling then
@@ -926,6 +951,11 @@ function I.Scan()
         -- A hello to a new binding, or one whose nonce we still lack (as
         -- AltStable's OnNewPresence): not to every peer every minute.
         if not known[id] or not S.theirNonce[id] then I.SendHello(id) end
+    end
+    -- A nonce we gave an id that is now neither bound nor a hint (a friend
+    -- whose presence filled in) goes, and with it the right to buffer.
+    for id in pairs(S.myNonce) do
+        if not fresh[id] and not hinted[id] then I.ForgetId(id) end
     end
     if settling then I.ScanAgainSoon() else S.settleTries = 0 end
 end
@@ -974,7 +1004,10 @@ function I.Send(inst, payload, onResult)
     local guid = PlayerGuid()
     if not K or not me or me.project == nil or me.region == nil or not IsGuid(guid) then return nil, "not-ready" end
     local dests, waiting = {}, 0
-    for id in pairs(S.peers) do
+    -- A snapshot: onResult below is host code, and may rescan.
+    local ids = {}
+    for id in pairs(S.peers) do ids[#ids + 1] = id end
+    for _, id in ipairs(ids) do
         local p = I.Route(id)
         if p then
             if S.theirNonce[id] then
@@ -1108,6 +1141,7 @@ function I.Settle(key, buf)
     if S.buffers[key] ~= buf then return end
     local now = time()
     if buf.complete then
+        if I.TryDeliver(key, buf) then return end          -- Battle.net may vouch for it now
         if now >= buf.awaitUntil then S.buffers[key] = nil else I.ArmSettle(key, buf) end
         return
     end

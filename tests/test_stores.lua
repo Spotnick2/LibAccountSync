@@ -125,17 +125,37 @@ do
     check(a.trusted["44444444444444444444444444444444"] == nil, "  the least recently seen evicted")
 end
 
--- 6. Our own key never counts as trusted, even if a store lists it.
+-- 6. Our own key never counts as trusted, even if a store lists it later.
 do
     WoW.reset(); WoW.resetLibStub()
     local lib = loadLibrary()
-    newHost(lib, "GlassChat", { key = K1, keyAt = 1, trusted = { [K1] = 5 } })
+    local a = { key = K1, keyAt = 1 }
+    newHost(lib, "GlassChat", a)
     login()
     WoW.advance(61)
     Peer.new({})
     lib.byTag.GlassChat.Rescan()
+    eq(lib.state.key, K1, "the store's key is ours")
+    a.trusted = { [K1] = 5 }
     eq(lib.impl.KeyTrusted(K1), false, "our own key is not trusted")
     eq(lib.impl.TrustUnion()[K1], nil, "  nor in the trusted set")
+end
+
+-- 6b. A key a store trusts is another account's: never chosen as ours. After
+--     a shared-key split, a read-only store still holding the old key must
+--     not bring it back next session (the split would repeat forever).
+do
+    WoW.reset(); WoW.resetLibStub()
+    local lib = loadLibrary()
+    local writable = { key = K2, keyAt = 100, trusted = { [K1] = 10 } }
+    local readonly = { v = 2, key = K1, keyAt = 50 }
+    newHost(lib, "GlassChat", writable)
+    newHost(lib, "AltStable", readonly)
+    login()
+    WoW.advance(61)
+    Peer.new({})
+    lib.byTag.GlassChat.Rescan()
+    eq(lib.state.key, K2, "an older key we trust is not chosen as ours")
 end
 
 -- 7. Forward compatibility: unknown fields survive; a newer store is read-only.

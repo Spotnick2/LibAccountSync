@@ -96,13 +96,17 @@ do
 end
 
 -- 7. Unknown frame types and a hello's extra trailing fields are ignored.
+--    A blank peer, so only its hello can make it a peer.
 do
-    local lib, inst, store = session()
-    local B = Peer.new({})
+    local store = { key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", keyAt = 1, trusted = { [OTHER_KEY] = 1 },
+                    selfProject = 18, selfRegion = 90, selfAt = 1 }
+    local lib, inst = session(store)
+    local B = Peer.new({ blank = true })
     inst.Rescan()
     local ok = pcall(B.deliver, B, "Z1|whatever|comes|next")
     check(ok, "an unknown frame type is ignored")
-    B:deliver(B:hello({ key = B.key }) .. "|a-future-field|another")
+    eq(#inst.Peers(), 0, "no peer before its hello")
+    B:deliver(B:hello() .. "|a-future-field|another")
     eq(#inst.Peers(), 1, "a hello with extra trailing fields is still read")
 end
 

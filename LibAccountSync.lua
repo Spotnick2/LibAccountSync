@@ -332,7 +332,21 @@ end
 local function Plain(v) if IsSecret(v) then return nil end return v end
 
 local function PlayerGuid() return Plain(UnitGUID("player")) end
-local function PlayerName() return Plain((UnitName("player"))) end
+-- Our WHOLE name. On Forever UnitName("player") returns the first name and
+-- the surname apart (AltStable #56, its API.PlayerFullName), while Battle.net's
+-- characterName is the whole "Name Surname": a hello carrying only the first
+-- name never matched, and the verified account never got our nonce (#4).
+local function PlayerName()
+    local name, second = UnitName("player")
+    if IsSecret(name) or type(name) ~= "string" or name == "" then return nil end
+    -- A first return that already holds a space is a whole name: whatever is
+    -- in the second slot is not its missing half (AltStable's 69977 shape).
+    if name:find(" ", 1, true) then return name end
+    if not IsSecret(second) and type(second) == "string" and second ~= "" then
+        return name .. " " .. second
+    end
+    return name
+end
 
 --------------------------------------------------------------------------------
 -- Stores (§3)

@@ -37,6 +37,32 @@ do
        "our answer proves our key over its nonce, by the plan's formula")
 end
 
+-- 1b. Names with surnames, as on Forever (#4): UnitName gives the surname
+--     apart, Battle.net gives "Name Surname". Our hello carries the whole
+--     name, and a verified account's whole-name hello is matched.
+do
+    local lib, inst, store = session(nil, { before = function() WoW.player.surname = "Belgarden" end })
+    local B = Peer.new({ name = "Karuzo Test" })
+    inst.Rescan()
+    eq(B:ourHello().name, "Malas Belgarden", "our hello carries our whole name")
+    B:deliver(B:hello({ key = B.key }))
+    eq(names(inst), "Karuzo Test:bnet", "a verified account's whole-name hello is matched")
+    eq(lib.state.theirNonce[3], B.nonce, "  and its nonce is held, so Send has a destination")
+    local answer = B:ourHello()
+    eq(answer.proof, proofFor(store.key, B.nonce, answer.nonce, "Malas Belgarden", WoW.player.guid,
+       WoW.player.realm, 18, 90), "  our proof binds the whole name")
+    B:deliver(B:hello({ key = B.key, name = "Karuzo", nonce = "0f0f0f0f0f0f0f0f" }))
+    eq(lib.state.theirNonce[3], B.nonce, "a first-name-only hello (a cc92deb copy) is still refused")
+end
+do
+    local lib, inst = session(nil, { before = function()
+        WoW.player.name, WoW.player.surname = "Malas Belgarden", "Classic Beta PvE"
+    end })
+    local B = Peer.new({})
+    inst.Rescan()
+    eq(B:ourHello().name, "Malas Belgarden", "a first return that is already whole is not glued to the second")
+end
+
 -- 2. A verified id whose hello names someone else: dropped, nothing trusted.
 do
     local lib, inst, store = session()

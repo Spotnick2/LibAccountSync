@@ -91,6 +91,8 @@ local M = {
         { "        if b.id == id and b.prior == nil then b.prior = guid end", "" } } },
     { "a known sender gone blank counts as first contact", {
         { "                prior = (p and p.guid) or S.lastGuid[id] }", "                prior = p and p.guid }" } } },
+    { "our hello carries only the first name", {
+        { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then\n        return name .. " " .. second\n    end\n', '' } } },
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },

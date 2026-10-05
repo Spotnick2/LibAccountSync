@@ -149,8 +149,9 @@ Because the newest copy any addon ships is the one that runs, an older host can 
 and two accounts can run different copies. So:
 - **A copy never changes what wire 1 means.** A later wire is added *alongside*, and a newer copy
   keeps speaking wire 1. This is LibGlass's "the API only grows" rule, applied to the wire.
-- **Parsers ignore extra trailing fields** in every frame, so a frame can grow without a new
-  wire.
+- **Hello parsers ignore extra trailing fields**, so the hello can grow without a new wire.
+  **Data frames can't grow that way**: their body is the whole rest of the frame (§2, Frames). A
+  data frame that needs more fields becomes a new frame type.
 - **Unknown frame types are ignored**, so a new frame type (an acknowledgement, a tag list) needs
   no new wire.
 - **The hello carries `maxWire`.** The `min(ours, theirs)` negotiation is written when wire 2
@@ -175,6 +176,10 @@ and two accounts can run different copies. So:
   before sending, because ChatThrottleLib errors past that.
 
 **Data:** `D1|tag|sid|i|n|mac|body`
+- **The body is everything after the sixth `|`**, to the end of the message. The codec doesn't
+  escape `|`, so the body may contain any number of them, and nothing may follow it. A parser
+  splits off exactly six header fields and never splits the body. Splitting it and keeping only
+  "the seventh field" would truncate a payload containing `|` (Codex round 3).
 - `mac` (32 hex, §5.3) rides on chunk 1. Other chunks carry `-`.
 - **Header budget, worst case:**
   - chunk 1: `D1|` (3) + tag (16) + `|` + sid (13) + `|` + i (3) + `|` + n (3) + `|` + mac (32) +
@@ -216,7 +221,10 @@ An embedded library can't declare SavedVariables, so each host passes a store ge
 two hosts there are two stores, which can hold different things.
 
 **Store shape:**
-`{ v = 1, key, keyAt, trusted = { [key] = lastSeen }, selfProject, selfRegion, selfAt, enabled }`
+`{ v = 1, key, keyAt, trusted = { [key] = lastSeen }, selfProject, selfRegion, selfAt, lastSid, enabled }`
+
+`lastSid` is the last stream id this account issued (§5.2). It is written to every writable store
+on each `Send`, and read as the maximum across stores.
 
 ### Our own key is chosen lazily and never overwrites another
 - **When:** at first need (the first hello, from login + 5 s), and only once **every** registered
@@ -394,7 +402,7 @@ and be bound as one of our characters.
 | **A key or proof is believed only from an id that is verified, ours by elimination, or already sent our nonce** | AltStable believes a trusted key from any id (`Core.lua` 3490). If our key ever leaked, any friend could be believed and could rewrite the lists, with no relay needed |
 | **`theirNonce` is stored only for an id that is verified, ours by elimination, or proven this session** | AltStable stores it before any check (`Core.lua` 3483). "Proven this session" keeps a reloaded peer working while the friends list is failing closed |
 | **Project and region are in the proof and the MAC** | A beta key copied to live can't prove there |
-| **Monotonic sid:** `GetServerTime() * 1000 + c`, where `c` resets when the second changes and is capped at 999. The receiver keeps a floor per **(tag, sender GUID)** for the session, raised only after an authenticated completion, and accepts only higher sids | GlassChat applies a snapshot wholesale. Two genuine sends arriving out of order, or a relay replaying an old genuine stream under its own id, would otherwise roll the lists back. Keying by GUID, which the proof binds, rather than by the session id handle, covers the replay |
+| **Monotonic sid:** `sid = max(GetServerTime() * 1000, lastSid + 1)`, with `lastSid` kept in the store (§3), so it survives a `/reload` in the same second and has no counter to exhaust: past 1000 sends in a second it runs ahead of the clock and stays monotonic. One counter serves every tag. Documented limit: after a client **crash** SavedVariables aren't written, so a send in the same second can repeat or fall below an old sid and is refused until the clock passes it. The receiver keeps a floor per **(tag, sender GUID)** for the session, raised only after an authenticated completion, and accepts only higher sids | GlassChat applies a snapshot wholesale. Two genuine sends arriving out of order, or a relay replaying an old genuine stream under its own id, would otherwise roll the lists back. Keying by GUID, which the proof binds, rather than by the session id handle, covers the replay |
 | **Caps:** the 32 KB ceiling and the `n` cap (§2); 2 concurrent streams per sender id and 8 in total; at most 128 KB buffered; the 6 s settle and the 60 s sweep; a refused stream stays refused; every message at most 255 bytes | AltStable has no limit on streams, `total` or size, and `StreamReady` loops to an unchecked `buf.total`: a freeze a peer can trigger |
 | **Reset `bnetUpSince` on `BN_DISCONNECTED`** too, not only on `PLAYER_LOGIN` and `BN_CONNECTED` | A reconnecting friends list is loading again |
 | **Entropy.** One SHA-256 over AltStable's sources (`Core.lua` 877-884) plus `GetServerTime()` and `fastrandom()`. It makes the key (once ever) and the nonces | The client has no cryptographic random source, so a key made once from many sources is the best available |
@@ -402,10 +410,18 @@ and be bound as one of our characters.
 ### 5.3 The stream MAC: one non-trivial item, flagged for review
 
 ```
-HMAC256(K_sender, "LibAccountSync-1.0|data|1|" .. receiverNonce .. "|" .. project .. "|"
-        .. region .. "|" .. tag .. "|" .. sid .. "|" .. n .. "|" .. SHA256(decodedPayload))
+HMAC256(K_sender, "LibAccountSync-1.0|data|1|" .. receiverNonce .. "|" .. senderGuid .. "|"
+        .. project .. "|" .. region .. "|" .. tag .. "|" .. sid .. "|" .. n .. "|"
+        .. SHA256(decodedPayload))
 ```
 cut to 32 hex, on chunk 1.
+
+- **`senderGuid` binds the stream to its author.** The sender puts in its own GUID. The receiver
+  puts in the GUID **authenticated for that id's binding** (from Battle.net, or from the proven
+  hello), never a value from the frame.
+  - Without it, a relay could present a genuine proven hello for character C and attach a
+    genuine stream captured from character A. A's stream would then be delivered as C's, and an
+    old snapshot of A's could be replayed under C's fresh sid floor (Codex round 3, P1).
 
 - **The sender always includes it.** Every destination is a peer whose nonce we hold (§1).
   `SHA256(payload)` is computed once per `Send`, then one short HMAC per peer.
@@ -418,11 +434,15 @@ cut to 32 hex, on chunk 1.
   - any other sender is delivered only if it has a **proven hello at completion** and the MAC
     verifies under a trusted key with **our current nonce for that id**;
   - a sender that isn't verified may fill a buffer only if we have sent that id our nonce. The
-    caps bound the memory.
+    caps bound the memory;
+  - **a complete stream whose sender isn't proven yet is kept, not dropped.** It waits as
+    "awaiting hello" for up to 10 s, within the same caps, and is re-checked whenever a hello from
+    that id is believed. It is delivered if the check passes, and dropped at the timeout or when
+    the binding changes (Codex round 3).
 
-  Deciding at completion lets a blank-presence peer's data land even when it overtakes the last
-  hello of the handshake (Battle.net is unordered). Only Battle.net can make an id verified, so
-  nobody can exploit the timing.
+  Together these let a blank-presence peer's data land however it interleaves with the last
+  hello of the handshake: some chunks before the hello, or every chunk before it (Battle.net is
+  unordered). Only Battle.net can make an id verified, so nobody can exploit the timing.
 - **Why it stays:** AltStable merges a peer's character records last-write-wins. GlassChat applies
   a **wholesale** snapshot, with removals and the "own characters" list. Without the MAC, the
   accepted relay of §5.1 could rewrite the lists, not only read them. With it, the limit is back
@@ -552,7 +572,11 @@ tests/test_stores.lua  test_upgrade.lua  test_isolation.lua  test_ctl.lua  test_
 - MAC:
   - relay injection fails;
   - a one-sided blank presence delivers;
-  - data that overtakes the last hello delivers;
+  - data that overtakes the last hello delivers, both with some chunks before the hello and with
+    every chunk before it, including a single-chunk payload;
+  - a relay pairing C's valid hello with A's valid stream fails, even with A's floor higher
+    (the GUID binding);
+  - a payload containing `|`, including a trailing one, round-trips;
   - a reflected own MAC is rejected;
 - a leaked key presented from a stranger's id is not believed;
 - stores:
@@ -561,7 +585,8 @@ tests/test_stores.lua  test_upgrade.lua  test_isolation.lua  test_ctl.lua  test_
   - the shared-key split;
   - a newer store stays read-only;
 - sid:
-  - a reload within the same second;
+  - a reload within the same second (persisted `lastSid`);
+  - more than 1000 sends in one second;
   - an old stream replayed under another id;
 - an inert `New`;
 - tag routing;
@@ -584,6 +609,9 @@ red:
 - accept our own key;
 - skip the MAC;
 - key the sid floor by id;
+- drop the sender GUID from the MAC;
+- drop a complete stream instead of keeping it awaiting its hello;
+- split the data body on `|`;
 - capture `lib.impl`;
 - drop the marker check.
 
@@ -634,7 +662,7 @@ No P0; 3 P1s and 8 P2s. Every fix is cheap, and all are in:
 | 7 | A trusted key in a hello is believed from any id (parity) | Believed only from a verified id, an elimination id, or one that holds our nonce (§5.2) |
 | 8 | The `theirNonce` rule locked out a peer proven this session while the friends list fails closed | "Or proven this session" (§5.2) |
 | 9 | Region failing closed rests on peer records carrying `regionID`, which is unmeasured | Gated on §7.8, with an `isInCurrentRegion` fallback (§5.2) |
-| 10 | The hello can't grow if parsers anchor the field count | Parsers ignore extra trailing fields (§2) |
+| 10 | The hello can't grow if parsers anchor the field count | Parsers ignore extra trailing fields (§2); narrowed to the hello in round 3 |
 | 11 | Hashing every Send could stall a frame | Threshold in §7.4; data at `NORMAL` priority (§2) |
 | P3 | `{n}` isn't a Lua pattern; copy `keyAt` with the key; `lastSeen` refreshed on use; the buffer cap starved a second stream; an imported AltStable key needs the oldest `keyAt`; later store versions keep `key` | All taken (§2, §3, §5.2) |
 
@@ -652,5 +680,15 @@ No P0; 3 P1s and 8 P2s. Every fix is cheap, and all are in:
 - **Upgrade:** `lib.impl` dispatch and the completion marker.
 - **The `\0` codec:** AltStable already sends arbitrary bytes over Battle.net.
 
-### Round 3
-Codex, launched by the owner. Start from §5 and §3. §5.3 is the item most open to "cut it".
+### Round 3: Codex (gpt, owner-launched), at `d2013ff` (2026-10-04)
+One P1 and three P2s, all fixed. Codex's verdict on §5.3: **keep the stream MAC**, with the
+sender binding below.
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 (P1) | A relay could pair C's valid proven hello with A's valid stream, delivering A's data as C and replaying an old A snapshot under C's fresh floor | The sender GUID is in the MAC, checked against the binding's authenticated GUID (§5.3) |
+| 2 | Every chunk arriving before the authenticating hello completed a stream that could never be delivered | A complete stream "awaiting hello" is kept for 10 s and re-checked when a hello is believed (§5.3) |
+| 3 | A per-second counter restarts on a same-second `/reload`, so new sids fell below the floor; the 999 cap was undefined | `sid = max(GetServerTime()*1000, lastSid + 1)`, with `lastSid` persisted in the store and no cap (§3, §5.2) |
+| 4 | "Ignore trailing fields" conflicts with a body that may contain `\|` | The body is everything after the sixth `\|`; trailing-field growth applies to the hello only (§2) |
+
+Each fix has its acceptance case in §8.

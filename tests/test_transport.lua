@@ -191,6 +191,40 @@ do
     eq(#box, 1, "A's older stream is not delivered as B")
 end
 
+-- 7e. Binding history from every path (Codex, r1 round 5):
+--        (a) A authenticated only by its data, then blank, then B;
+--        (b) A's stream admitted before A was known, A then proven, B next.
+do
+    local lib, inst, store, A = verified()
+    local box = inbox(inst)
+    lib.state.lastGuid[3] = nil               -- A known through data alone
+    A:send("GlassChat", "A newer", { sid = "1760000000002" })
+    eq(#box, 1, "(a) A's newer snapshot lands")
+    A:setBlank(true)
+    for _, f in ipairs(A:frames("GlassChat", string.rep("o", 400), { sid = "1760000000001" })) do A:deliver(f) end
+    local Bc = Peer.new({ id = 3, name = "Bravo", guid = "Player-1-000000B2", nonce = "b2b2b2b2b2b2b2b2" })
+    Bc:deliver(Bc:hello({ key = OTHER_KEY }))
+    WoW.advance(11)
+    eq(#box, 1, "(a) A's older stream is not delivered as B")
+end
+do
+    local lib, inst, store = session()
+    local box = inbox(inst)
+    local A = Peer.new({ blank = true })
+    inst.Rescan()                             -- a hint: our nonce goes to A
+    local old = A:frames("GlassChat", string.rep("o", 400), { sid = "1760000000001" })
+    A:deliver(old[1])                         -- admitted while A is unknown
+    A:setBlank(false)
+    A:deliver(A:hello({ key = A.key }))
+    A:send("GlassChat", "A newer", { sid = "1760000000002" })
+    eq(#box, 1, "(b) A's newer snapshot lands")
+    local Bc = Peer.new({ id = 3, name = "Bravo", guid = "Player-1-000000B2", nonce = "b2b2b2b2b2b2b2b2" })
+    Bc:deliver(Bc:hello({ key = OTHER_KEY }))
+    for i = 2, #old do A:deliver(old[i]) end
+    WoW.advance(11)
+    eq(#box, 1, "(b) A's older stream is not delivered as B")
+end
+
 -- 7c. A new character on a blank account we had learned: its stream fails the
 --     MAC against the stale binding and waits for its hello, not refused.
 do

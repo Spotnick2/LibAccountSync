@@ -81,9 +81,14 @@ local M = {
     { "a proven peer passes without a MAC", {
         { "    elseif now and S.myNonce[id] and buf.mac then",
           "    elseif now then\n        sender = now\n    elseif now and S.myNonce[id] and buf.mac then" } } },
-    { "an unbound stream is not delivered once verified", {
-        { 'elseif now and now.proven == "bnet" and (buf.prior == nil or buf.prior == now.guid) then',
-          'elseif now and now.proven == "bnet" and buf.prior ~= nil and buf.prior == now.guid then' } } },
+    { "a verified sender passes whatever its prior character", {
+        { 'elseif now and now.proven == "bnet" and buf.prior == now.guid then',
+          'elseif now and now.proven == "bnet" then' } } },
+    { "a binding authenticated by data is not recorded", {
+        { "        S.learned[id] = nil      -- Battle.net speaks for this id now\n        I.NoteBinding(id, g.playerGuid)\n",
+          "        S.learned[id] = nil      -- Battle.net speaks for this id now\n" } } },
+    { "a pending unbound stream keeps no identity", {
+        { "        if b.id == id and b.prior == nil then b.prior = guid end", "" } } },
     { "a known sender gone blank counts as first contact", {
         { "                prior = (p and p.guid) or S.lastGuid[id] }", "                prior = p and p.guid }" } } },
     -- Our own key never counts as trusted (§3)

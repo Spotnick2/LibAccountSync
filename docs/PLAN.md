@@ -429,9 +429,20 @@ cut to 32 hex, on chunk 1.
     out "because it saw the receiver as verified" would have its streams dropped silently
     whenever the two presences differ (found in round 2).
 - **The receiver decides at completion, not at the first frame:**
-  - a sender **verified by Battle.net when the stream was admitted or at completion** is accepted,
-    MAC unchecked: Blizzard vouches for the id, and a binding change wipes that id's buffers (r1:
-    this lets a sender who sends and logs out still be delivered, as §1 promises);
+  - a sender **verified by Battle.net** is accepted with the MAC unchecked only if it is **the same
+    character** throughout (r1, after Codex's PR #3 rounds):
+    - each id remembers every character authenticated for it this session, however it was
+      authenticated (`NoteBinding`);
+    - a stream records the character bound when it began, or else the first one authenticated
+      after;
+    - it passes without the MAC when that character is the one Battle.net verified then and is
+      still there (or has logged out since: send-then-logout still delivers, as §1 promises), or
+      is the one Battle.net verifies now;
+    - after any change of character on that account, the MAC decides, bound to the GUID shown
+      now, so an older character's stream can't slip under a new one's sid floor;
+    - **stated limit:** a stream begun while its sender was blank and never identified is credited
+      to the first character authenticated for that id after it. Ownership holds (Battle.net
+      verifies the game account as ours), and an unidentified sender had no floor to bypass;
   - any other sender is delivered only if it has a **proven hello at completion** and the MAC
     verifies under a trusted key with **our current nonce for that id**;
   - a sender that isn't verified may fill a buffer only if we have sent that id our nonce. The

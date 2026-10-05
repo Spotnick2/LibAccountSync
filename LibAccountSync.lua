@@ -674,10 +674,24 @@ end
 
 -- The binding for an id right now: Battle.net's word, or a hello proven this
 -- session while that id is still online and still blank. Else nil.
+-- Every binding, however it is authenticated (Battle.net, a hello, data
+-- admission or completion), is recorded here: the character this id was last
+-- bound to this session. A stream admitted before any character was known
+-- for its id takes the first one authenticated after it, so a later change
+-- of character is seen as one and must pass the GUID-bound MAC (§5.3;
+-- Codex r1 rounds 4, 5).
+function I.NoteBinding(id, guid)
+    S.lastGuid[id] = guid
+    for _, b in pairs(S.buffers) do
+        if b.id == id and b.prior == nil then b.prior = guid end
+    end
+end
+
 function I.GameFor(id, me, friends)
     local g = I.OwnAccountGame(id, me)
     if g then
         S.learned[id] = nil      -- Battle.net speaks for this id now
+        I.NoteBinding(id, g.playerGuid)
         return PeerFromGame(id, g)
     end
     local l = S.learned[id]
@@ -688,6 +702,7 @@ function I.GameFor(id, me, friends)
         I.ForgetId(id)           -- gone, or no longer blank: Battle.net decides now
         return nil
     end
+    I.NoteBinding(id, l.guid)
     return { id = id, guid = l.guid, name = l.name, realm = l.realm, faction = l.faction, proven = l.proven }
 end
 
@@ -900,7 +915,7 @@ function I.OnHello(id, text)
         return
     end
     S.peers[id] = peer
-    S.lastGuid[id] = peer.guid
+    I.NoteBinding(id, peer.guid)
     -- Answered even for a peer we know: it may have reloaded and forgotten us.
     I.SendHello(id, "answer")
     I.RecheckAwaiting(id)
@@ -981,7 +996,6 @@ function I.Scan()
     wipe(S.peers)
     for id, p in pairs(fresh) do
         S.peers[id] = p
-        S.lastGuid[id] = p.guid
         -- A hello to a new binding, or one whose nonce we still lack (as
         -- AltStable's OnNewPresence): not to every peer every minute.
         if not known[id] or not S.theirNonce[id] then I.SendHello(id) end
@@ -1233,12 +1247,12 @@ function I.TryDeliver(key, buf)
         -- it is still the one there (or has logged out since: send, then log
         -- out, still delivers).
         sender = now or was
-    elseif now and now.proven == "bnet" and (buf.prior == nil or buf.prior == now.guid) then
-        -- Verified now, and either a genuine first contact (no character was
-        -- ever bound to this id this session: no floor to slip under) or the
-        -- same character it was last bound to (§5.3; Codex r1 rounds 3, 4).
-        -- A known sender gone blank keeps its prior GUID, so a different
-        -- character now goes through the MAC below.
+    elseif now and now.proven == "bnet" and buf.prior == now.guid then
+        -- Verified now, and the first character authenticated for this id
+        -- since the stream began is this one (I.NoteBinding; GameFor above
+        -- notes it for a genuine first contact). A known sender gone blank, or
+        -- a character change, leaves another prior GUID, so it goes through
+        -- the MAC below (§5.3; Codex r1 rounds 3-5).
         sender = now
     elseif now and S.myNonce[id] and buf.mac then
         -- Anything else (a character change on that account since the stream

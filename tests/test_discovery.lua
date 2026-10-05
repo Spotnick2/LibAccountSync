@@ -110,9 +110,42 @@ do
     inst.Rescan()
     eq(#inst.Peers(), 1, "a first run with our presence blank still finds our other account")
     eq(B:ourHello() and B:ourHello().key, store.key, "  and the key goes to it")
-    eq(store.selfProject, 18, "  and our game is stored")
-    eq(store.selfRegion, 90, "  and our region")
+    eq(store.selfProject, nil, "  and the constants are not saved (only a live presence is)")
 end
+-- 9b. A stored value (learned from a live presence) wins over the client's
+--     constants, and is never overwritten by them.
+do
+    local store = { selfProject = 18, selfRegion = 90, selfAt = 1 }
+    local lib, inst = session(store, { before = function()
+        WoW.bn.blank = true
+        rawset(_G, "WOW_PROJECT_ID", 2)          -- another addon's compat value, say
+    end })
+    Peer.new({})
+    inst.Rescan()
+    eq(#inst.Peers(), 1, "the stored project wins over a wrong client constant")
+    eq(store.selfProject, 18, "  and is not overwritten")
+end
+-- 9c. Each guard on the client's constants (I.ClientSelf).
+do
+    local lib = session()
+    local function cs() return lib.impl.ClientSelf() end
+    eq(select(2, cs()), 90, "plain constants are read")
+    WoW.clientRegion = 0
+    eq(cs(), nil, "a region of 0 is not used")
+    WoW.clientRegion = 90
+    rawset(_G, "WOW_PROJECT_ID", "18")
+    eq(cs(), nil, "a project that isn't a number is not used")
+    rawset(_G, "WOW_PROJECT_ID", 0)
+    eq(cs(), nil, "a project of 0 is not used")
+    rawset(_G, "WOW_PROJECT_ID", 18)
+    local real = GetCurrentRegion
+    GetCurrentRegion = function() error("no region") end
+    eq(cs(), nil, "a GetCurrentRegion that throws is not used")
+    GetCurrentRegion = real
+    WoW.clientRegion = WoW.Secret("region")
+    eq(cs(), nil, "a secret region is not used")
+end
+
 -- 10. A live presence wins over the client's constants; secret constants are ignored.
 do
     local lib, inst = session(nil, { before = function() rawset(_G, "WOW_PROJECT_ID", 99); WoW.clientRegion = 77 end })

@@ -102,17 +102,19 @@ local M = {
     -- (No "MINOR left at 2" mutation: that is what test_upgrade 4d's freeze
     -- guard catches in a normal run, since r2's manifest no longer matches,
     -- and that guard is off here because every mutant differs from r2.)
-    { "the bit path is used without its self-check", {
-        { "            if ok1 and ok2\n                and hex(d1) ==", "            if true or ok1 and ok2\n                and hex(d1) ==" } } },
-    { "a refused bit path is not undone", {
-        { "                bxor, band, shr, ror = slowXor, slowAnd, slowShr, slowRor\n", "" } } },
-    { "the client's project is ignored", {
-        { '        if not IsSecret(p) and type(p) == "number" and p > 0 then s.project = p end', '' } } },
-    { "the client's region is ignored", {
-        { '        if ok and not IsSecret(r) and type(r) == "number" and r > 0 then s.region = r end', '' } } },
-    { "the client's constants win over the presence", {
-        { "    if s.project == nil then\n        local p = rawget", "    do\n        local p = rawget" } } },
-    -- (No mutation for IsSecret on the client constants: a newproxy secret has
+    { "the bit path skips the operand check", { { "            if okA and same then", "            if true then" } } },
+    { "the bit path skips the digest check", {
+        { "                if ok1 and ok2\n", "                if true or ok1 and ok2\n" } } },
+    { "a refused bit path is not undone", { { "                    bxor, band = slowXor, slowAnd\n", "" } } },
+    { "the stored values are not the fallback", { { "        s.project, s.region = I.SavedSelf()\n        if s.project", "        s.project, s.region = nil, nil\n        if s.project" } } },
+    { "the client's constants are never used", { { "        if s.project == nil then s.project, s.region = I.ClientSelf() end\n", "" } } },
+    { "the client's constants win over the stored values", {
+        { "        s.project, s.region = I.SavedSelf()\n        if s.project == nil then s.project, s.region = I.ClientSelf() end",
+          "        s.project, s.region = I.ClientSelf()\n        if s.project == nil then s.project, s.region = I.SavedSelf() end" } } },
+    { "a project of 0 is used", { { '    if IsSecret(p) or type(p) ~= "number" or p <= 0 then return nil, nil end', '    if IsSecret(p) or type(p) ~= "number" then return nil, nil end' } } },
+    { "a non-number project is used", { { '    if IsSecret(p) or type(p) ~= "number" or p <= 0 then return nil, nil end', '    if IsSecret(p) then return nil, nil end' } } },
+    { "a region of 0 is used", { { '    if IsSecret(r) or type(r) ~= "number" or r <= 0 then return nil, nil end', '    if IsSecret(r) or type(r) ~= "number" then return nil, nil end' } } },
+    -- (No mutation for IsSecret on the client constants, project or region: a newproxy secret has
     -- type "userdata", so the type check after it hides the difference under
     -- the stubs. In the client a secret keeps its type, hence the check.)
     -- Our own key never counts as trusted (§3)

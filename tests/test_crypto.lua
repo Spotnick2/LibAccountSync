@@ -84,8 +84,29 @@ do
     for _, v in ipairs(VECTORS) do eq(G.SHA256(v[1]), v[2], "  and the pure-Lua path still gives the FIPS digest") end
     local throws = {}
     for k, f in pairs(SIGNED_BIT) do throws[k] = f end
-    throws.rshift = function() error("bit: out of range") end
+    throws.bxor = function() error("bit: out of range") end
     eq(withBit(throws).HASH_PATH, "lua", "a bit library that throws is refused")
+    -- Wrong only at one edge operand (0x80000000), which short digests may
+    -- never meet: the operand check refuses it.
+    local edge = {}
+    for k, f in pairs(SIGNED_BIT) do edge[k] = f end
+    edge.band = function(a, b)
+        if a % 4294967296 == 2147483648 and b % 4294967296 == 2147483648 then return 0 end
+        return SIGNED_BIT.band(a, b)
+    end
+    eq(withBit(edge).HASH_PATH, "lua", "a bit library wrong at one edge operand is refused")
+    -- Wrong only for an operand outside the sampled ones but inside SHA-256's
+    -- first round (0x6a09e667, the first initial hash word): the digest check
+    -- refuses it, and the pure-Lua path still gives the right digests.
+    local deep = {}
+    for k, f in pairs(SIGNED_BIT) do deep[k] = f end
+    deep.band = function(a, b)
+        if a % 4294967296 == 0x6a09e667 then return 0 end
+        return SIGNED_BIT.band(a, b)
+    end
+    local Dp = withBit(deep)
+    eq(Dp.HASH_PATH, "lua", "a bit library wrong past the operand sample is refused by the digest check")
+    for _, v in ipairs(VECTORS) do eq(Dp.SHA256(v[1]), v[2], "  and the pure-Lua path is restored") end
 end
 
 done("test_crypto")

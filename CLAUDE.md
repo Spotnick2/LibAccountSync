@@ -4,9 +4,11 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
-**Status: r1 implemented** (#1), unit- and mutation-tested. Next: GlassChat embeds it by
+**Status: MINOR 2 implemented** (#1, #4), unit- and mutation-tested. MINOR 1 was never tagged
+(its pilot copy, `cc92deb`, failed the first in-game check: #4; it is frozen in `tests/fixtures/`
+because GlassChat's pilot embedded it). Next: GlassChat embeds it by
 `commit:` (pilot), the two-account in-game check of `docs/PLAN.md` §7 with the probe, then the
-`r1` tag (EMBEDDED-LIBRARIES §9). `docs/PLAN.md` is the reviewed design (two internal rounds plus
+`r2` tag (EMBEDDED-LIBRARIES §9). `docs/PLAN.md` is the reviewed design (two internal rounds plus
 Codex round 3); **this is security code: a mistake hands a stranger the player's lists**, so any
 change to ownership, the proof, the MAC, the stores or the wire goes back through the plan and an
 adversarial review first.
@@ -90,7 +92,8 @@ pwsh tests/run.ps1                                       # luac -p + every tests
   formulas independently of the library.
 - **Every new test is mutation-tested**: add its mutation to `tests/mutate.lua` and see it red.
   The control run must be green; a mutation that no longer applies must be fixed, not dropped.
-- Upgrade tests use a synthetic newer copy until r2; from then on freeze each released copy as
+- Upgrade tests use a synthetic newer copy, plus the frozen `cc92deb` pilot copy (MINOR 1) loaded
+  before the current one; from `r2` on, freeze each released copy as
   `tests/fixtures/LibAccountSync-rN.lua` (EMBEDDED-LIBRARIES §8).
 
 ## Conventions (sibling addons')

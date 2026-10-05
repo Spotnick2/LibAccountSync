@@ -37,15 +37,68 @@ do
        "our answer proves our key over its nonce, by the plan's formula")
 end
 
+-- 1b. Names with surnames, as on Forever (#4): UnitName gives the surname
+--     apart, Battle.net gives "Name Surname". Our hello carries the whole
+--     name, and a verified account's whole-name hello is matched.
+do
+    local lib, inst, store = session(nil, { before = function() WoW.player.surname = "Belgarden" end })
+    local B = Peer.new({ name = "Karuzo Test" })
+    inst.Rescan()
+    eq(B:ourHello().name, "Malas Belgarden", "our hello carries our whole name")
+    B:deliver(B:hello({ key = B.key }))
+    eq(names(inst), "Karuzo Test:bnet", "a verified account's whole-name hello is matched")
+    eq(lib.state.theirNonce[3], B.nonce, "  and its nonce is held, so Send has a destination")
+    local answer = B:ourHello()
+    eq(answer.proof, proofFor(store.key, B.nonce, answer.nonce, "Malas Belgarden", WoW.player.guid,
+       WoW.player.realm, 18, 90), "  our proof binds the whole name")
+end
+-- A verified account is matched by GUID: an older copy's first-name-only
+-- hello, a hyphenated surname and a long accented name all pair.
+for _, case in ipairs({ { "a first-name-only hello (a cc92deb copy)", "Karuzo Test", "Karuzo" },
+                        { "a hyphenated surname", "Karuzo Smith-Jones", "Karuzo Smith-Jones" },
+                        { "a long accented name", "Élodiénneàé Ségolènnéèàé", "Élodiénneàé Ségolènnéèàé" } }) do
+    local lib, inst, store = session(nil, { before = function() WoW.player.surname = "Belgarden" end })
+    local B = Peer.new({ name = case[2] })
+    inst.Rescan()
+    B:deliver(B:hello({ key = B.key, name = case[3] }))
+    eq(lib.state.theirNonce[3], B.nonce, case[1] .. ": its nonce is held")
+    eq(inst.Peers()[1] and inst.Peers()[1].name, case[2], case[1] .. ": named as Battle.net names it")
+end
+-- Our own hyphenated surname travels too.
+do
+    local lib, inst = session(nil, { before = function() WoW.player.surname = "Smith-Jones" end })
+    local B = Peer.new({})
+    inst.Rescan()
+    eq(B:ourHello() and B:ourHello().name, "Malas Smith-Jones", "our hyphenated surname is sent whole")
+end
+-- A secret surname is never concatenated: the first name is used.
+do
+    local lib, inst = session(nil, { before = function() WoW.player.surname = WoW.Secret("surname") end })
+    local B = Peer.new({})
+    local ok = pcall(inst.Rescan)
+    check(ok, "a secret surname does not throw")
+    eq(B:ourHello() and B:ourHello().name, "Malas", "  and the first name goes alone")
+end
+do
+    local lib, inst = session(nil, { before = function()
+        WoW.player.name, WoW.player.surname = "Malas Belgarden", "Classic Beta PvE"
+    end })
+    local B = Peer.new({})
+    inst.Rescan()
+    eq(B:ourHello().name, "Malas Belgarden", "a first return that is already whole is not glued to the second")
+end
+
 -- 2. A verified id whose hello names someone else: dropped, nothing trusted.
 do
     local lib, inst, store = session()
     local B = Peer.new({})
     inst.Rescan()
-    B:deliver(B:hello({ key = B.key, name = "Impostor" }))
-    check(not (store.trusted and store.trusted[OTHER_KEY]), "a hello contradicting Battle.net is not trusted")
     B:deliver(B:hello({ key = B.key, guid = "Player-1-000000EE" }))
-    check(not (store.trusted and store.trusted[OTHER_KEY]), "  nor one whose GUID disagrees with Battle.net's")
+    check(not (store.trusted and store.trusted[OTHER_KEY]), "a hello whose GUID disagrees with Battle.net's is not trusted")
+    B:deliver(B:hello({ key = B.key, guid = "" }))
+    check(not (store.trusted and store.trusted[OTHER_KEY]), "  nor one with no GUID")
+    B:deliver(B:hello({ key = B.key, name = "Whatever" }))
+    eq(inst.Peers()[1] and inst.Peers()[1].name, "Karuzo", "the GUID matches: the name shown is Battle.net's, not the hello's")
 end
 
 -- 3. Only our own other account counts: friends, offline accounts, another

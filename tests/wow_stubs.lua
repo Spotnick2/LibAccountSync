@@ -114,7 +114,9 @@ end
 --------------------------------------------------------------------------------
 
 function UnitGUID(unit) if unit == "player" then return WoW.player.guid end end
-function UnitName(unit) if unit == "player" then return WoW.player.name, nil end end
+-- On Forever the player's surname is UnitName's SECOND return (AltStable
+-- #56); Battle.net's characterName is the whole "Name Surname".
+function UnitName(unit) if unit == "player" then return WoW.player.name, WoW.player.surname end end
 function UnitFactionGroup(unit) if unit == "player" then return WoW.player.faction, WoW.player.faction end end
 function GetRealmName() return WoW.player.realm end
 function IsLoggedIn() return WoW.loggedIn == true end
@@ -161,7 +163,12 @@ local function bnSelf()
     if WoW.bn.blank then
         return { gameAccountID = WoW.bn.myId, isOnline = true, clientProgram = "WoW", isInCurrentRegion = true }
     end
-    return { gameAccountID = WoW.bn.myId, characterName = WoW.player.name, playerGuid = WoW.player.guid,
+    -- Battle.net's whole name, by the same rule the library reads UnitName.
+    local whole = WoW.player.name
+    if not whole:find(" ", 1, true) and type(WoW.player.surname) == "string" then
+        whole = whole .. " " .. WoW.player.surname
+    end
+    return { gameAccountID = WoW.bn.myId, characterName = whole, playerGuid = WoW.player.guid,
              isOnline = true, clientProgram = "WoW", wowProjectID = WoW.bn.project, regionID = WoW.bn.region,
              isInCurrentRegion = true, factionName = WoW.player.faction, realmName = WoW.player.realm }
 end

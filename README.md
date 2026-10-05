@@ -7,7 +7,8 @@ with ownership proven before anything is sent or accepted.
 Embedded with LibStub; players don't install it separately.
 
 > **Status:** r1 implemented and unit-tested; the two-account in-game check (docs/PLAN.md §7)
-> comes before the `r1` tag. GlassChat is the pilot consumer.
+> comes before the first tag, `r2` (`r1` was never tagged: its pilot copy failed in game, #4).
+> GlassChat is the pilot consumer.
 
 ## Using it
 
@@ -46,7 +47,7 @@ Within `LibAccountSync-1.0` this API only grows.
 externals:
   Libs/LibAccountSync-1.0:
     url: https://github.com/Spotnick2/LibAccountSync
-    tag: r1
+    tag: r2
 ignore:
   # CurseForge's packager doesn't apply an external's own ignore list:
   - Libs/LibAccountSync-1.0/tests
@@ -69,7 +70,7 @@ with `pwsh ..\LibAccountSync\Tools\deploy.ps1 -Addon <YourAddon>`.
   design: a friend whose friends-list entry is misread as yours and who runs a purpose-built relay
   could relay proofs; the stream MAC keeps such a relay from changing what you send. Details:
   `docs/PLAN.md`.
-- `"sent"` means handed to the wire. There is no delivery acknowledgement in r1.
+- `"sent"` means handed to the wire. There is no delivery acknowledgement yet.
 - For a blank-presence sender, the proof binds the name lower-cased: compare `sender.name`
   case-insensitively (character names are unique across the region).
 

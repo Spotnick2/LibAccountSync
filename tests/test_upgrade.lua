@@ -150,6 +150,29 @@ do
     eq(lib.state.scanPending, false, "the pending flag is cleared")
 end
 
+-- 4c. The copy GlassChat's pilot embeds (cc92deb, MINOR 1, frozen in
+--     tests/fixtures/) loads FIRST, and a host makes its instance from it.
+--     The fixed copy loading second must win, and the old instance must run
+--     the fix: our hello carries the whole name, and an older peer's
+--     first-name hello is matched by GUID (#4; Codex on PR #5).
+do
+    WoW.reset(); WoW.resetLibStub()
+    WoW.player.surname = "Belgarden"
+    local lib = loadCopy(fixtureCopy("LibAccountSync-cc92deb.lua"), "GlassChat")
+    eq(select(2, LibStub:GetLibrary(MAJOR)), 1, "the pilot copy loads first, at MINOR 1")
+    local inst = newHost(lib, "GlassChat", {})
+    login()
+    WoW.advance(61)
+    loadLibrary("LibAccountSyncProbe")
+    eq(select(2, LibStub:GetLibrary(MAJOR)), MINOR, "the fixed copy wins")
+    eq(lib.ready, MINOR, "  and is complete")
+    local B = Peer.new({ name = "Karuzo Test" })
+    inst.Rescan()
+    eq(B:ourHello() and B:ourHello().name, "Malas Belgarden", "the pilot's instance sends our whole name")
+    B:deliver(B:hello({ key = B.key, name = "Karuzo" }))
+    eq(lib.state.theirNonce[3], B.nonce, "  and matches an older peer's first-name hello by GUID")
+end
+
 -- 5. The completion marker is the last line, and MINOR is written once.
 do
     local src = runtimeSource()

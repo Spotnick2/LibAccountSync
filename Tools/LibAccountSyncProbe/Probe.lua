@@ -108,7 +108,8 @@ local function Hash()
         local s = Payload(kb * 1024)
         local t0 = debugprofilestop()
         T.SHA256(s)
-        Log(("hash: SHA-256 of %d KB took %.0f ms (threshold 100 ms in one frame)"):format(kb, debugprofilestop() - t0))
+        Log(("hash: SHA-256 of %d KB took %.0f ms on the %s path (threshold 100 ms in one frame)"):format(
+            kb, debugprofilestop() - t0, tostring(T.HASH_PATH)))
     end
 end
 

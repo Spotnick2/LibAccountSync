@@ -120,6 +120,10 @@ function UnitName(unit) if unit == "player" then return WoW.player.name, WoW.pla
 function UnitFactionGroup(unit) if unit == "player" then return WoW.player.faction, WoW.player.faction end end
 function GetRealmName() return WoW.player.realm end
 function IsLoggedIn() return WoW.loggedIn == true end
+-- The client's own region (in the dump) and project (a runtime global, not in
+-- the dump): measured equal to Battle.net's regionID and wowProjectID (#7).
+-- WoW.clientRegion = nil / rawset(_G, "WOW_PROJECT_ID", nil) model their absence.
+function GetCurrentRegion() return WoW.clientRegion end
 
 --------------------------------------------------------------------------------
 -- Chat
@@ -293,10 +297,19 @@ function WoW.reset()
     WoW.ctlDefer = false
     WoW.ctlQueue = {}
     WoW.loggedIn = false
+    WoW.clientRegion = 90
+    rawset(_G, "WOW_PROJECT_ID", 18)
     WoW.player = { name = "Malas", guid = "Player-1-0000000A", realm = "Classic Beta PvE", faction = "Alliance" }
     WoW.bn = { me = 1, myId = 2, project = 18, region = 90, tag = "Owner#1", connected = true,
                accounts = {}, friends = {}, secret = {} }
     rawset(_G, "ChatThrottleLib", ctlStub)
+end
+
+-- A client that can't tell its own game or region (the r2 behaviour when our
+-- presence is blank and nothing is stored).
+function WoW.noClientConstants()
+    WoW.clientRegion = nil
+    rawset(_G, "WOW_PROJECT_ID", nil)
 end
 
 -- A fresh client: no LibStub, so the next load starts the library from scratch.

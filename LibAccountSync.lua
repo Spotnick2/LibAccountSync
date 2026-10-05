@@ -27,7 +27,7 @@
 -- - lib.ready = MINOR is the last line: a copy that threw partway leaves every
 --   entry point inert.
 
-local MAJOR, MINOR = "LibAccountSync-1.0", 2
+local MAJOR, MINOR = "LibAccountSync-1.0", 3
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end   -- an equal or newer copy is already loaded
 
@@ -106,6 +106,7 @@ lib.IsReady = Ready
 -- Arithmetic only, no `bit` library, so the game and the tests run the same
 -- code. Checked against the FIPS 180-2 and RFC 4231 vectors (test_crypto).
 local SHA256, HMAC256
+local HASH_PATH = "lua"                -- "bit" when the client's bit library passed its check
 do
     local TWO32 = 4294967296
     local XOR4, AND4 = {}, {}
@@ -200,6 +201,34 @@ do
 
     local function hex(s)
         return (s:gsub(".", function(ch) return ("%02x"):format(ch:byte()) end))
+    end
+
+    -- WoW's own `bit` library (8 functions in the 1.60.1 dump) does in C what
+    -- nib does with table lookups (#8: the pure-Lua path took 249 ms for 16 KB
+    -- in game). How it treats signs and values past 2^31 is unmeasured, so
+    -- every result is folded into 0..2^32-1, and the fast path is kept only if
+    -- it reproduces the FIPS 180-2 digests below at load. Anything else, an
+    -- error included, keeps the pure-Lua path: a wrong hash never reaches a MAC.
+    do
+        local B = rawget(_G, "bit")
+        if type(B) == "table" and type(B.bxor) == "function" and type(B.band) == "function"
+            and type(B.bor) == "function" and type(B.rshift) == "function" and type(B.lshift) == "function" then
+            local bx, ba, bo, rs, ls = B.bxor, B.band, B.bor, B.rshift, B.lshift
+            local slowXor, slowAnd, slowShr, slowRor = bxor, band, shr, ror
+            bxor = function(a, b) return bx(a, b) % TWO32 end
+            band = function(a, b) return ba(a, b) % TWO32 end
+            shr = function(a, n) return rs(a, n) % TWO32 end
+            ror = function(a, n) return bo(rs(a, n), ls(a, 32 - n)) % TWO32 end
+            local ok1, d1 = pcall(digest, "abc")
+            local ok2, d2 = pcall(digest, "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
+            if ok1 and ok2
+                and hex(d1) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+                and hex(d2) == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1" then
+                HASH_PATH = "bit"
+            else
+                bxor, band, shr, ror = slowXor, slowAnd, slowShr, slowRor
+            end
+        end
     end
 
     function SHA256(msg) return hex(digest(msg)) end
@@ -588,6 +617,18 @@ function I.Self()
             s.project, s.region = g.wowProjectID, s.region or g.regionID
             s.game = s.game or g.gameAccountID
         end
+    end
+    -- Our presence can't say (blank): the client's own constants, measured
+    -- equal to Battle.net's values on both accounts (#7, PLAN §7.8). A live
+    -- presence still wins; the stored values are the last resort.
+    -- WOW_PROJECT_ID isn't in the API dump, though it exists at runtime.
+    if s.project == nil then
+        local p = rawget(_G, "WOW_PROJECT_ID")
+        if not IsSecret(p) and type(p) == "number" and p > 0 then s.project = p end
+    end
+    if s.region == nil then
+        local ok, r = pcall(GetCurrentRegion)
+        if ok and not IsSecret(r) and type(r) == "number" and r > 0 then s.region = r end
     end
     if type(s.project) == "number" and type(s.region) == "number" then
         I.SaveSelf(s.project, s.region)
@@ -1555,7 +1596,7 @@ end
 for _, inst in ipairs(lib.instances) do I.Migrate(inst) end
 
 -- The test seam: the crypto and codec, for building the other side's frames.
-lib._test = { SHA256 = SHA256, HMAC256 = HMAC256, Encode = Encode, Decode = Decode, PREFIX = PREFIX,
+lib._test = { SHA256 = SHA256, HMAC256 = HMAC256, HASH_PATH = HASH_PATH, Encode = Encode, Decode = Decode, PREFIX = PREFIX,
               BODY_FIRST = BODY_FIRST, BODY_REST = BODY_REST, MAX_CHUNKS = MAX_CHUNKS }
 
 lib.ready = MINOR

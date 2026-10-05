@@ -98,7 +98,23 @@ local M = {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
           '    if second ~= nil and second ~= "" then' } } },
     { "MINOR not raised over the pilot copy", {
-        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 2', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 3', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+    -- (No "MINOR left at 2" mutation: that is what test_upgrade 4d's freeze
+    -- guard catches in a normal run, since r2's manifest no longer matches,
+    -- and that guard is off here because every mutant differs from r2.)
+    { "the bit path is used without its self-check", {
+        { "            if ok1 and ok2\n                and hex(d1) ==", "            if true or ok1 and ok2\n                and hex(d1) ==" } } },
+    { "a refused bit path is not undone", {
+        { "                bxor, band, shr, ror = slowXor, slowAnd, slowShr, slowRor\n", "" } } },
+    { "the client's project is ignored", {
+        { '        if not IsSecret(p) and type(p) == "number" and p > 0 then s.project = p end', '' } } },
+    { "the client's region is ignored", {
+        { '        if ok and not IsSecret(r) and type(r) == "number" and r > 0 then s.region = r end', '' } } },
+    { "the client's constants win over the presence", {
+        { "    if s.project == nil then\n        local p = rawget", "    do\n        local p = rawget" } } },
+    -- (No mutation for IsSecret on the client constants: a newproxy secret has
+    -- type "userdata", so the type check after it hides the difference under
+    -- the stubs. In the client a secret keeps its type, hence the check.)
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },

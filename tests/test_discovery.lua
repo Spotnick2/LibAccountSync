@@ -27,7 +27,7 @@ end
 -- 2. Our region unknown: fail closed, even with our game known.
 do
     local store = { selfProject = 18, selfAt = 1 }
-    local lib, inst = session(store, { before = function() WoW.bn.blank = true end })
+    local lib, inst = session(store, { before = function() WoW.bn.blank = true; WoW.noClientConstants() end })
     Peer.new({})
     inst.Rescan()
     eq(names(inst), "", "our region unknown: nobody is ours")
@@ -53,7 +53,7 @@ end
 -- 5. While our presence is blank and our game unknown, the scan looks again
 --    every 10 s, so a presence that fills in is used within seconds.
 do
-    local lib, inst = session(nil, { before = function() WoW.bn.blank = true end })
+    local lib, inst = session(nil, { before = function() WoW.bn.blank = true; WoW.noClientConstants() end })
     Peer.new({})
     inst.Rescan()
     eq(#sentTo(3), 0, "nothing while we don't know our game")
@@ -100,6 +100,36 @@ do
     eq(lib.state.myNonce[9], nil, "once it shows as a friend's, the nonce goes")
     F:send("GlassChat", "x")
     eq(next(lib.state.buffers), nil, "  and its frames are not buffered")
+end
+
+-- 9. Our presence blank and nothing stored (a first run): the client's own
+--    project and region stand in, so the other account is found at once (#7).
+do
+    local lib, inst, store = session(nil, { before = function() WoW.bn.blank = true end })
+    local B = Peer.new({})
+    inst.Rescan()
+    eq(#inst.Peers(), 1, "a first run with our presence blank still finds our other account")
+    eq(B:ourHello() and B:ourHello().key, store.key, "  and the key goes to it")
+    eq(store.selfProject, 18, "  and our game is stored")
+    eq(store.selfRegion, 90, "  and our region")
+end
+-- 10. A live presence wins over the client's constants; secret constants are ignored.
+do
+    local lib, inst = session(nil, { before = function() rawset(_G, "WOW_PROJECT_ID", 99); WoW.clientRegion = 77 end })
+    Peer.new({})
+    inst.Rescan()
+    eq(#inst.Peers(), 1, "our presence's own project and region win over the constants")
+end
+do
+    local lib, inst = session(nil, { before = function()
+        WoW.bn.blank = true
+        rawset(_G, "WOW_PROJECT_ID", WoW.Secret("project"))
+        WoW.clientRegion = WoW.Secret("region")
+    end })
+    Peer.new({})
+    local ok = pcall(inst.Rescan)
+    check(ok, "secret client constants don't throw")
+    eq(#inst.Peers(), 0, "  and are not used: fail closed")
 end
 
 done("test_discovery")

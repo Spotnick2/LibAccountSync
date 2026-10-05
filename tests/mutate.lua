@@ -97,6 +97,8 @@ local M = {
     { "a secret surname is concatenated", {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
           '    if second ~= nil and second ~= "" then' } } },
+    { "MINOR not raised over the pilot copy", {
+        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 2', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },

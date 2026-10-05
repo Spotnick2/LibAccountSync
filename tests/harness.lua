@@ -69,6 +69,16 @@ function loadLibrary(host)
     return loadCopy(copyOf(), host or "GlassChat")
 end
 
+-- An older copy: this checkout with its runtime replaced by a frozen one
+-- from tests/fixtures/ (EMBEDDED-LIBRARIES §8: never "the current source with
+-- a lower number").
+function fixtureCopy(name)
+    return copyOf(function(file, src)
+        if file ~= "LibAccountSync.lua" then return src end
+        return (readFile("tests/fixtures/" .. name):gsub("\r\n", "\n"))
+    end)
+end
+
 local MINOR_LINE = 'local MAJOR, MINOR = "LibAccountSync%-1%.0", (%d+)'
 function currentMinor()
     return tonumber(runtimeSource():match(MINOR_LINE))

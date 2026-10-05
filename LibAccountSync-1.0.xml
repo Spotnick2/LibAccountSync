@@ -5,7 +5,7 @@
             externals:
               Libs/LibAccountSync-1.0:
                 url: https://github.com/Spotnick2/LibAccountSync
-                tag: r1
+                tag: r2
 
         and then loaded from that addon's TOC before any of its own files:
 

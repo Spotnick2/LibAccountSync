@@ -158,6 +158,41 @@ do
     eq(lib.state.key, K2, "an older key we trust is not chosen as ours")
 end
 
+-- 6c. A verified account sends OUR key before our key is chosen (a store
+--     still loading): it waits, then splits once the key is known.
+do
+    WoW.reset(); WoW.resetLibStub()
+    local lib = loadLibrary()
+    local a, b = { key = OTHER_KEY, keyAt = 50 }, nil
+    newHost(lib, "GlassChat", a)
+    lib:New({ addon = "AltStable", store = function() return b end })
+    login()
+    WoW.advance(61)
+    local B = Peer.new({})
+    B:deliver(B:hello({ key = OTHER_KEY }))
+    check(not (a.trusted and a.trusted[OTHER_KEY]), "our own key is not trusted while ours is undecided")
+    b = {}
+    lib.byTag.GlassChat.Rescan()
+    check(a.key ~= OTHER_KEY and a.key == lib.state.key, "once decided, the shared key splits")
+    eq(b.key, lib.state.key, "  and every store gets the new key")
+end
+
+-- 6d. Every store's key is another account's: a new key is made AND saved.
+do
+    WoW.reset(); WoW.resetLibStub()
+    local lib = loadLibrary()
+    local a, b = { key = K1, keyAt = 1 }, { trusted = { [K1] = 5 } }
+    newHost(lib, "GlassChat", a)
+    newHost(lib, "AltStable", b)
+    login()
+    WoW.advance(61)
+    Peer.new({})
+    lib.byTag.GlassChat.Rescan()
+    check(lib.state.key ~= K1, "a key we trust is not ours")
+    eq(a.key, lib.state.key, "the new key replaces another account's key in the store")
+    eq(b.key, lib.state.key, "  and is saved in the keyless store")
+end
+
 -- 7. Forward compatibility: unknown fields survive; a newer store is read-only.
 do
     WoW.reset(); WoW.resetLibStub()

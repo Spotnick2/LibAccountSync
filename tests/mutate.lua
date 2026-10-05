@@ -46,13 +46,31 @@ local M = {
     { "a stranger's frames are remembered", { { "if not p and not S.myNonce[id] then return end",
                                                 "if not p and not S.myNonce[id] then S.refused[key] = time(); return end" } } },
     { "a reloaded learned peer is not answered", {
-        { "if fresh and (hinted or S.learned[id]) then I.SendHello(id, \"answer\") end",
-          "if fresh and hinted then I.SendHello(id, \"answer\") end" } } },
+        { "if hinted or S.learned[id] then I.SendHello(id, \"answer\") end",
+          "if hinted then I.SendHello(id, \"answer\") end" } } },
     { "proof checks unbounded", { { "IsGuid(guid)\n            and I.ProofBudget(id) then", "IsGuid(guid) then" } } },
-    { "a former hint keeps its nonce", { { "        if not fresh[id] and not hinted[id] then I.ForgetId(id) end", "" } } },
-    { "a trusted key can be chosen as ours", { { ' and not I.TrustUnion(stores)[k] then', ' then' } } },
+    { "a former hint keeps its nonce", {
+        { '(not rec.unknown and type(rec.characterName) == "string" and rec.characterName ~= "")', 'false' } } },
+    { "a trusted key can be chosen as ours", { { ' and not trusted[k] then', ' then' } } },
     { "a waiting stream is not rechecked on settle", {
         { "        if I.TryDeliver(key, buf) then return end          -- Battle.net may vouch for it now\n", "" } } },
+    { "an inert Peers answers nil", { { 'if name == "Peers" then return {} end', '' } } },
+    { "a failed MAC is refused, not waited on", { { "        if not sender then return false end",
+        "        if not sender then S.buffers[key], S.refused[key] = nil, time(); return true end" } } },
+    { "a key before ours is chosen is trusted", { { "            if not own then\n", "            if false then\n" } } },
+    { "an answer counts before it is sent", { { "    if S.answered[id] then S.answered[id].nonce = nil end\n", "" } } },
+    { "a hint loses its nonce while the list fails closed", {
+        { "            if not rec or rec.isOnline == false\n", "            if true or rec.isOnline == false\n" } } },
+    { "the newest stream is refused at the cap", { { "            if oldSid and oldSid < tonumber(sid) then", "            if false then" } } },
+    { "chunks keep going after a failure", { { "            if track.done and i < n then break end      -- failed: the rest would go nowhere\n", "" } } },
+    { "a scan flag stays set when not ready", {
+        { "        S.scanPending = false\n        if not Ready() then return end", "        if not Ready() then return end\n        S.scanPending = false" } } },
+    { "the prefix result is ignored", { { "(r == nil or r == true or r == 0)", "true" } } },
+    { "a suffixed name is accepted", { { ' or name:find("-", 1, true)', '' } } },
+    { "a trusted store key is never replaced", { { " or (t.key ~= S.key and union[t.key])", "" } } },
+    { "the prefix compared before the secret check", {
+        { "if IsSecret(prefix) or IsSecret(text) or IsSecret(senderID) or prefix ~= PREFIX then",
+          "if prefix ~= PREFIX or IsSecret(text) or IsSecret(senderID) then" } } },
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },
@@ -70,8 +88,8 @@ local M = {
     { "a proven peer passes without a MAC", { { 'if now and now.proven == "bnet" then', 'if now then' } } },
     { "a complete stream is not kept for its hello", {
         { "buf.awaitUntil = time() + AWAIT_HELLO\n        I.ArmSettle(key, buf)", "S.buffers[key] = nil" } } },
-    { "no recheck when a hello lands", { { "    I.SendHello(id, fresh and \"answer\" or nil)\n    I.RecheckAwaiting(id)",
-                                           "    I.SendHello(id, fresh and \"answer\" or nil)" } } },
+    { "no recheck when a hello lands", { { "    I.SendHello(id, \"answer\")\n    I.RecheckAwaiting(id)",
+                                           "    I.SendHello(id, \"answer\")" } } },
     -- Stream ids (§5.2)
     { "the sid floor keyed by id", { { 'local floorKey = buf.tag .. "|" .. tostring(sender.guid)',
                                        'local floorKey = buf.tag .. "|" .. tostring(buf.id)' } } },
@@ -89,7 +107,8 @@ local M = {
     { "send without their nonce", { { "            if S.theirNonce[id] then\n                dests",
                                       "            if true then\n                dests" } } },
     -- Stores (§3)
-    { "a store's key is overwritten", { { "if S.key and not ValidKey(t.key) then", "if S.key then" } } },
+    { "a store's key is overwritten", {
+        { "if S.key and (not ValidKey(t.key) or (t.key ~= S.key and union[t.key])) then", "if S.key then" } } },
     { "a newer store is written", { { "local function Writable(t) return t.v == nil or t.v == STORE_VERSION end",
                                       "local function Writable(t) return true end" } } },
     { "no trust cap", { { "if #keys <= TRUST_CAP then return end", "if true then return end" } } },

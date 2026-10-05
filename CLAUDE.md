@@ -96,5 +96,8 @@ pwsh tests/run.ps1                                       # luac -p + every tests
 ## Conventions (sibling addons')
 
 - Issue → branch → PR (`Closes #N`) → review (owner-launched) → the owner merges.
+- Every client value that can be a secret is checked with `issecretvalue` before any use
+  (compare, truth-test, concatenate): Battle.net records through the readers, everything else
+  (event arguments, BNGetInfo, prefix results) with `IsSecret` first.
 - Raise MINOR for every behaviour change, in the same PR; tag the merge commit `rN`.
 - Right-size for a single maintainer.

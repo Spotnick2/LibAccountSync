@@ -95,6 +95,22 @@ do
     end
 end
 
+-- 6b. A prefix the client refuses is retried and reported, not assumed.
+do
+    WoW.reset(); WoW.resetLibStub()
+    WoW.prefixResult = 1
+    local lib = loadLibrary()
+    newHost(lib, "GlassChat", {})
+    login()
+    WoW.advance(61)
+    local said = false
+    for _, r in ipairs(reports.GlassChat) do if r.text:find("prefix") then said = true end end
+    check(said, "a refused prefix registration is reported")
+    WoW.prefixResult = 0
+    lib.byTag.GlassChat.Rescan()
+    check(WoW.prefixes[PREFIX], "  and retried on the next scan")
+end
+
 -- 7. Unknown frame types and a hello's extra trailing fields are ignored.
 --    A blank peer, so only its hello can make it a peer.
 do

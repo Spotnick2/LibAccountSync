@@ -82,7 +82,7 @@ local FUNCTIONS = { "Send", "OnMessage", "Peers", "Rescan", "SetEnabled", "IsEna
 --------------------------------------------------------------------------------
 
 local STATE_TABLES = { "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
-                       "finished", "refused", "floors", "routeChecked", "reported", "proofChecks" }
+                       "finished", "refused", "floors", "routeChecked", "reported", "proofChecks", "pendingKeys" }
 for _, k in ipairs(STATE_TABLES) do
     if S[k] == nil then S[k] = {} end
 end
@@ -366,11 +366,12 @@ function I.OwnKey()
     local stores, all = I.Stores()
     if not all or #stores == 0 then return nil end
     local best, bestAt
+    local trusted = I.TrustUnion(stores)
     for _, t in ipairs(stores) do
         local k, at = t.key, t.keyAt
         -- A key we trust is another account's (a shared-key split moved it
         -- there): never ours again, even where a read-only store keeps it.
-        if ValidKey(k) and type(at) == "number" and not I.TrustUnion(stores)[k] then
+        if ValidKey(k) and type(at) == "number" and not trusted[k] then
             if not best or at < bestAt or (at == bestAt and k < best) then best, bestAt = k, at end
         end
     end
@@ -379,7 +380,12 @@ function I.OwnKey()
     end
     S.key, S.keyAt = best, bestAt
     I.SyncStores()
-    return best
+    -- Keys verified accounts sent before our own was chosen.
+    for id, pk in pairs(S.pendingKeys) do
+        S.pendingKeys[id] = nil
+        if pk.key == best then I.SplitSharedKey(id, pk.guid) else I.Trust(pk.key) end
+    end
+    return S.key
 end
 
 -- Bring every writable store in line: the frozen key into stores that have
@@ -396,7 +402,9 @@ function I.SyncStores()
     for _, t in ipairs(stores) do
         if Writable(t) then
             Stamp(t)
-            if S.key and not ValidKey(t.key) then t.key, t.keyAt = S.key, S.keyAt end
+            if S.key and (not ValidKey(t.key) or (t.key ~= S.key and union[t.key])) then
+                t.key, t.keyAt = S.key, S.keyAt                 -- none, or another account's
+            end
             if type(t.trusted) ~= "table" then t.trusted = {} end
             for k, seen in pairs(union) do
                 local mine = t.trusted[k]
@@ -686,7 +694,7 @@ end
 -- Battle.net contradicts it. Whoever comes back proves itself afresh.
 function I.ForgetId(id)
     S.learned[id], S.helloSent[id], S.myNonce[id], S.theirNonce[id] = nil, nil, nil, nil
-    S.answered[id], S.proofChecks[id] = nil, nil
+    S.answered[id], S.proofChecks[id], S.pendingKeys[id] = nil, nil, nil
     S.routeChecked[id] = nil
     for key, buf in pairs(S.buffers) do
         if buf.id == id then S.buffers[key] = nil end
@@ -695,7 +703,7 @@ end
 
 function I.WipeSession()
     for _, k in ipairs({ "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
-                         "routeChecked", "proofChecks" }) do
+                         "routeChecked", "proofChecks", "pendingKeys" }) do
         wipe(S[k])
     end
 end
@@ -739,13 +747,12 @@ end
 function I.SendHello(id, how)
     local now = time()
     local last = S.helloSent[id]
+    local a
     if how == "answer" then
-        local a = S.answered[id]
+        a = S.answered[id]
         if a and a.nonce == S.theirNonce[id] then return end
         if a and (now - a.since) < 60 and a.count >= ANSWERS_PER_MINUTE then return end
         if not a or (now - a.since) >= 60 then a = { since = now, count = 0 } end
-        a.count, a.nonce = a.count + 1, S.theirNonce[id]
-        S.answered[id] = a
     elseif how ~= "now" then
         if last and (now - last) < (how == "soon" and HELLO_FLOOR or HELLO_EVERY) then return end
     end
@@ -768,17 +775,25 @@ function I.SendHello(id, how)
         I.ReportOnce("hellolen", "LibAccountSync: hello too long, not sent.", "error")
         return
     end
+    -- Counted as sent (and as this nonce's answer) only once it is queued;
+    -- a send that fails undoes both, so the next hello is answered again.
     S.helloSent[id] = now
+    if a then
+        a.count, a.nonce = a.count + 1, theirs
+        S.answered[id] = a
+    end
     local ok = pcall(ctl.BNSendGameData, ctl, "ALERT", PREFIX, msg, "WHISPER", id, PREFIX .. id,
         function(_, didSend)
             if not Ready() then return end
             return lib.impl.OnHelloSent(id, now, didSend)
         end)
-    if not ok then S.helloSent[id] = nil end
+    if not ok then I.OnHelloSent(id, now, false) end
 end
 
 function I.OnHelloSent(id, stamp, didSend)
-    if didSend == false and S.helloSent[id] == stamp then S.helloSent[id] = nil end
+    if didSend ~= false or S.helloSent[id] ~= stamp then return end
+    S.helloSent[id] = nil
+    if S.answered[id] then S.answered[id].nonce = nil end
 end
 
 -- Split a frame on "|", at most `max` fields; extra trailing fields of a
@@ -808,7 +823,8 @@ function I.OnHello(id, text)
     local f = Fields(text, 9)
     local name, guid, faction, realm, key, nonce, proof = f[3], f[4], f[5], f[6], f[7], f[8], f[9]
     if not IsDigits(f[2], 3) then return end
-    if not IsField(name, 48) or name == "" or not IsField(faction or "", 16) or not IsField(realm or "", 64) then
+    if not IsField(name, 48) or name == "" or name:find("-", 1, true)
+        or not IsField(faction or "", 16) or not IsField(realm or "", 64) then
         return
     end
     guid, faction, realm = guid or "", faction or "", realm or ""
@@ -820,8 +836,8 @@ function I.OnHello(id, text)
     if Short(name) == Short(PlayerName()) then return end         -- our own name
     if nonce == S.myNonce[id] then return end                     -- reflection
     local me = I.Self()
-    local friends = I.FriendGameIDs()
     local g = I.OwnAccountGame(id, me)
+    local friends = not g and I.FriendGameIDs() or nil
     local hinted = not g and I.OwnByElimination(id, me, friends)
     -- Their nonce is kept only from an id that is ours, a hint, or proven
     -- this session (AltStable stored it from anyone, Core.lua 3483).
@@ -832,7 +848,16 @@ function I.OnHello(id, text)
         -- Battle.net knows them: the hello must agree with it.
         if Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid) then return end
         if key ~= "" then
-            if key == I.OwnKey() then I.SplitSharedKey(id, g.playerGuid) else I.Trust(key) end
+            local own = I.OwnKey()
+            if not own then
+                -- Our key isn't chosen yet (a store still loading): it might
+                -- BE this key (a shared one). Decide once it is chosen.
+                S.pendingKeys[id] = { key = key, guid = g.playerGuid }
+            elseif key == own then
+                I.SplitSharedKey(id, g.playerGuid)
+            else
+                I.Trust(key)
+            end
         end
         peer = PeerFromGame(id, g)
     elseif hinted or S.myNonce[id] then
@@ -851,13 +876,9 @@ function I.OnHello(id, text)
             end
         end
         if via and IsGuid(guid) and guid ~= PlayerGuid() then
-            if S.learned[id] and S.learned[id].guid ~= guid then
-                -- Another character now: the old one's buffers go. Our nonce
-                -- stays, since the proof just answered it and MACs need it.
-                local mine = S.myNonce[id]
-                I.ForgetId(id)
-                S.myNonce[id] = mine
-            end
+            -- Another character on this account replaces the learned one.
+            -- Its buffers stay: they may be the new character's own stream,
+            -- and the MAC binds the GUID this hello proves.
             I.Trust(via)                                           -- refresh lastSeen
             S.theirNonce[id] = nonce
             S.learned[id] = { name = name, guid = guid, faction = faction ~= "" and faction or nil,
@@ -870,12 +891,13 @@ function I.OnHello(id, text)
         -- believe us, and its next hello answers ours.
         -- A peer proven earlier this session that reloaded is answered too,
         -- or it never gets our nonce while the friends list fails closed.
-        if fresh and (hinted or S.learned[id]) then I.SendHello(id, "answer") end
+        -- "answer" itself skips a nonce already answered (and sent).
+        if hinted or S.learned[id] then I.SendHello(id, "answer") end
         return
     end
     S.peers[id] = peer
     -- Answered even for a peer we know: it may have reloaded and forgotten us.
-    I.SendHello(id, fresh and "answer" or nil)
+    I.SendHello(id, "answer")
     I.RecheckAwaiting(id)
 end
 
@@ -888,8 +910,8 @@ function I.ScanAgainSoon()
     S.settlePending = true
     S.settleTries = S.settleTries + 1
     C_Timer.After(SETTLING_EVERY, function()
-        if not Ready() then return end
         S.settlePending = false
+        if not Ready() then return end
         return lib.impl.Scan()
     end)
 end
@@ -898,8 +920,8 @@ function I.RequestScan()
     if S.scanPending then return end
     S.scanPending = true
     C_Timer.After(2, function()
-        if not Ready() then return end
         S.scanPending = false
+        if not Ready() then return end
         return lib.impl.Scan()
     end)
 end
@@ -907,7 +929,11 @@ end
 function I.Scan()
     S.lastScan = time()
     if not S.loggedIn then return end
+    if not I.RegisterPrefix() then
+        I.ReportOnce("prefix", "LibAccountSync: the addon-message prefix could not be registered; nothing arrives.", "error")
+    end
     if not I.Active() then I.WipeSession(); return end
+    I.OwnKey()             -- settles the key (and any keys waiting on it) once every store resolves
     for id in pairs(S.learned) do
         local g = I.GameRec(id)
         if not g or g.unknown or g.isOnline == false then I.ForgetId(id) end
@@ -952,10 +978,17 @@ function I.Scan()
         -- AltStable's OnNewPresence): not to every peer every minute.
         if not known[id] or not S.theirNonce[id] then I.SendHello(id) end
     end
-    -- A nonce we gave an id that is now neither bound nor a hint (a friend
-    -- whose presence filled in) goes, and with it the right to buffer.
+    -- A nonce we gave an id that is positively not ours now (offline, or a
+    -- presence that filled in as someone else's) goes, and with it the right
+    -- to buffer. A friends list failing closed proves nothing: kept.
     for id in pairs(S.myNonce) do
-        if not fresh[id] and not hinted[id] then I.ForgetId(id) end
+        if not fresh[id] then
+            local rec = I.GameRec(id)
+            if not rec or rec.isOnline == false
+                or (not rec.unknown and type(rec.characterName) == "string" and rec.characterName ~= "") then
+                I.ForgetId(id)
+            end
+        end
     end
     if settling then I.ScanAgainSoon() else S.settleTries = 0 end
 end
@@ -1011,7 +1044,7 @@ function I.Send(inst, payload, onResult)
         local p = I.Route(id)
         if p then
             if S.theirNonce[id] then
-                dests[#dests + 1] = p
+                dests[#dests + 1] = { peer = p, nonce = S.theirNonce[id] }
             else
                 waiting = waiting + 1
                 I.Result(inst, onResult, p, "failed", "not-ready")
@@ -1034,9 +1067,9 @@ function I.Send(inst, payload, onResult)
     -- One text form on both sides of the MAC: 13 digits, never "1.7e+12".
     local sid = ("%.0f"):format(I.NextSid())
     local tag = inst.addon
-    for _, p in ipairs(dests) do
-        local id = p.id
-        local mac = I.Mac(K, S.theirNonce[id], guid, me.project, me.region, tag, sid, n, hash)
+    for _, d in ipairs(dests) do
+        local p, id = d.peer, d.peer.id
+        local mac = I.Mac(K, d.nonce, guid, me.project, me.region, tag, sid, n, hash)
         local track = { inst = inst, onResult = onResult, peer = p, remaining = n }
         for i = 1, n do
             local frame = table.concat({ "D" .. WIRE, tag, sid, tostring(i), tostring(n),
@@ -1046,7 +1079,8 @@ function I.Send(inst, payload, onResult)
                     if not Ready() then return end
                     return lib.impl.OnChunkSent(arg, didSend, result)
                 end, track)
-            if not ok then I.OnChunkSent(track, false, nil); break end
+            if not ok then I.OnChunkSent(track, false, nil) end
+            if track.done and i < n then break end      -- failed: the rest would go nowhere
         end
     end
     return #dests
@@ -1106,6 +1140,18 @@ function I.OnData(id, text)
             total = total + 1
             bytes = bytes + b.bytes
             if b.id == id then perId = perId + 1 end
+        end
+        if perId >= STREAMS_PER_ID then
+            -- Snapshots are wholesale and sids monotonic: a newer stream
+            -- supersedes the sender's oldest, never the other way round.
+            local oldKey, oldSid
+            for k, b in pairs(S.buffers) do
+                if b.id == id and (not oldSid or b.sid < oldSid) then oldKey, oldSid = k, b.sid end
+            end
+            if oldSid and oldSid < tonumber(sid) then
+                S.buffers[oldKey] = nil
+                total, perId = total - 1, perId - 1
+            end
         end
         if perId >= STREAMS_PER_ID or total >= STREAMS_TOTAL then S.refused[key] = time(); return end
         buf = { id = id, tag = tag, sid = tonumber(sid), sidText = sid, n = n, chunks = {}, have = 0,
@@ -1185,11 +1231,10 @@ function I.TryDeliver(key, buf)
                 break
             end
         end
-        if not sender then
-            -- A stream that fails its MAC is not retried: refused to the end.
-            S.buffers[key], S.refused[key] = nil, time()
-            return true
-        end
+        -- A MAC that fails may mean a stale binding (another character on
+        -- that account, its hello still on the way): wait for the hello,
+        -- dropped when the wait runs out.
+        if not sender then return false end
     else
         return false
     end
@@ -1240,7 +1285,7 @@ end
 function I.OnEvent(event, ...)
     if event == "BN_CHAT_MSG_ADDON" then
         local prefix, text, _, senderID = ...
-        if prefix ~= PREFIX or IsSecret(text) or IsSecret(senderID) then return end
+        if IsSecret(prefix) or IsSecret(text) or IsSecret(senderID) or prefix ~= PREFIX then return end
         if type(text) ~= "string" or type(senderID) ~= "number" or not S.loggedIn or not I.Active() then return end
         local kind = text:sub(1, 3)
         if kind == "H1|" then return I.OnHello(senderID, text) end
@@ -1283,9 +1328,15 @@ if not lib.ticker then
         return lib.impl.Tick()
     end)
 end
-if not lib.prefixRegistered then
-    lib.prefixRegistered = pcall(C_ChatInfo.RegisterAddonMessagePrefix, PREFIX) or nil
+-- RegisterAddonMessagePrefix answers an enum (0 = Success) rather than
+-- throwing; a refusal is retried on every scan and reported once.
+function I.RegisterPrefix()
+    if lib.prefixRegistered then return true end
+    local ok, r = pcall(C_ChatInfo.RegisterAddonMessagePrefix, PREFIX)
+    if ok and not IsSecret(r) and (r == nil or r == true or r == 0) then lib.prefixRegistered = true end
+    return lib.prefixRegistered
 end
+I.RegisterPrefix()
 
 --------------------------------------------------------------------------------
 -- Instances (§1)
@@ -1364,8 +1415,24 @@ function I.Diagnostics(inst)
     end
 end
 
+-- What an inert instance answers (§1): still the right shape for the calls a
+-- host iterates or measures (Peers a table, Diagnostics an iterator), so
+-- someone else's broken copy can't throw inside the host.
+function lib.Inert(name)
+    if name == "Peers" then return {} end
+    if name == "Diagnostics" then
+        local done = false
+        return function()
+            if done then return nil end
+            done = true
+            return "LibAccountSync-1.0 did not finish loading: sync is off this session."
+        end
+    end
+    return nil, "not-ready"
+end
+
 -- Thin closures that check readiness and dispatch at call time. An inert
--- instance (the library half-loaded) answers nil, "not-ready" (§1).
+-- instance (the library half-loaded) answers through lib.Inert.
 function I.Migrate(inst)
     for _, name in ipairs(FUNCTIONS) do
         if inst[name] == nil then
@@ -1376,7 +1443,7 @@ function I.Migrate(inst)
                         pcall(inst.report, "LibAccountSync-1.0 did not finish loading: sync is off this session.",
                               "error")
                     end
-                    return nil, "not-ready"
+                    return lib.Inert(name)
                 end
                 return lib.impl[name](inst, ...)
             end
@@ -1408,7 +1475,7 @@ function lib:New(opts)
                     inst.inertReported = true
                     pcall(inst.report, "LibAccountSync-1.0 did not finish loading: sync is off this session.", "error")
                 end
-                return nil, "not-ready"
+                return lib.Inert(name)
             end
         end
         return inst

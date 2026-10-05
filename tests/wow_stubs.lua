@@ -125,6 +125,7 @@ function IsLoggedIn() return WoW.loggedIn == true end
 
 C_ChatInfo = {}
 function C_ChatInfo.RegisterAddonMessagePrefix(prefix)
+    if WoW.prefixResult and WoW.prefixResult ~= 0 then return WoW.prefixResult end
     WoW.prefixes[prefix] = true
     return 0
 end

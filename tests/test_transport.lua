@@ -159,6 +159,19 @@ do
     eq(box[1] and box[1].payload, "waited", "delivered once Battle.net verifies the sender")
 end
 
+-- 7c. A new character on a blank account we had learned: its stream fails the
+--     MAC against the stale binding and waits for its hello, not refused.
+do
+    local lib, inst, store, B = proven()
+    local box = inbox(inst)
+    local C2 = Peer.new({ id = 3, name = "Second", guid = "Player-1-000000C2", blank = true })
+    C2:send("GlassChat", "from the new character", { sid = "1760000000200" })
+    eq(#box, 0, "nothing while the binding is the old character's")
+    C2:deliver(C2:hello({ nonce = "c2c2c2c2c2c2c2c2" }))
+    eq(box[1] and box[1].payload, "from the new character", "delivered once its hello lands")
+    eq(box[1] and box[1].sender.name, "Second", "  as the new character")
+end
+
 -- 8. A complete stream whose hello never comes is dropped after 10 s.
 do
     local store = seasoned()
@@ -195,6 +208,14 @@ do
     local count = 0
     for _ in pairs(lib.state.buffers) do count = count + 1 end
     eq(count, 2, "at most 2 open streams per sender")
+    local sids = {}
+    for _, b in pairs(lib.state.buffers) do sids[#sids + 1] = b.sidText end
+    table.sort(sids)
+    eq(table.concat(sids, ","), "1760000000022,1760000000023", "  the newest two: a newer stream evicts the oldest")
+    B:deliver("D1|GlassChat|1760000000020|1|2|" .. string.rep("0", 32) .. "|x")
+    count = 0
+    for _ in pairs(lib.state.buffers) do count = count + 1 end
+    eq(count, 2, "  and a stream older than both is refused")
 end
 do
     local lib, inst, store, B = verified()   -- no open streams in the way
@@ -327,6 +348,27 @@ do
     inst.Send("x", function(sender) seen[#seen + 1] = sender.name; inst.Rescan() end)
     table.sort(seen)
     eq(table.concat(seen, ","), "Karuzo,Three,Two", "each peer reported exactly once")
+end
+
+-- 17c. A host's onResult that switches sync off mid-Send doesn't make Send throw.
+do
+    local lib, inst, store, B = verified()
+    Peer.new({ id = 4, name = "Two", guid = "Player-1-00000004" })
+    inst.Rescan()
+    local ok = pcall(inst.Send, "x", function() inst.SetEnabled(false) end)
+    check(ok, "Send survives its own callback wiping the session")
+end
+
+-- 17d. A destination whose first chunk fails gets no more chunks.
+do
+    local lib, inst, store, B = verified()
+    local calls = 0
+    local real = C_BattleNet.SendGameData
+    C_BattleNet.SendGameData = function(...) calls = calls + 1; return real(...) end
+    WoW.sendResults = { 12 }
+    inst.Send(string.rep("q", 3000))
+    C_BattleNet.SendGameData = real
+    eq(calls, 1, "after an offline refusal, the other chunks are not queued")
 end
 
 -- 18. Waiting sends: ChatThrottleLib holding frames, reported only when the

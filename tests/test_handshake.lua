@@ -287,6 +287,50 @@ do
     eq(lib.state.proofChecks[3].count, 12, "at most 12 proof checks a minute per id")
 end
 
+-- 14d. An answer that fails to send is not counted: the same nonce again is
+--      answered.
+do
+    local store = seasoned()
+    local lib, inst = session(store)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()
+    WoW.advance(6)
+    local n = #sentTo(3, "H1|")
+    WoW.sendResults = { 9 }
+    B:deliver(B:hello({ proof = "", nonce = "1212121212121212" }))
+    eq(#sentTo(3, "H1|"), n, "the answer failed")
+    B:deliver(B:hello({ proof = "", nonce = "1212121212121212" }))
+    eq(#sentTo(3, "H1|"), n + 1, "the same nonce is answered again")
+end
+
+-- 14e. A hint's nonce is kept while the friends list fails closed: that
+--      proves nothing about the id.
+do
+    local store = seasoned()
+    local lib, inst = session(store)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()
+    check(lib.state.myNonce[3] ~= nil, "a hint has our nonce")
+    WoW.bn.friends = { { 9 } }
+    WoW.bn.friendInfoNil = true
+    inst.Rescan()
+    check(lib.state.myNonce[3] ~= nil, "  and keeps it while the list fails closed")
+end
+
+-- 14f. A hello whose name carries a "-suffix" is refused: names are bare.
+do
+    local store = seasoned()
+    local lib, inst = session(store)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()
+    -- The genuine proof for "karuzo" (the proof binds the bare, lower-cased
+    -- name), presented under an altered display name.
+    local ours = B:ourHello()
+    local proof = proofFor(B.key, ours.nonce, B.nonce, "Karuzo", B.guid, B.realm, 18, 90)
+    B:deliver(B:hello({ name = "Karuzo-Elsewhere", proof = proof }))
+    eq(names(inst), "", "a name with a suffix is not believed, even with the bare name's proof")
+end
+
 -- 15. Our presence blank and our game never seen: fail closed, no hellos.
 do
     local lib, inst, store = session(nil, { before = function() WoW.bn.blank = true end })

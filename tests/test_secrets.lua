@@ -110,6 +110,8 @@ do
     eq(n, 3, "the three plain-value BN calls are found")
     eq(#unchecked, 0, "each is tested with IsSecret: " .. table.concat(unchecked, ", "))
     check(src:find("issecretvalue%(v%) == true") ~= nil, "IsSecret asks issecretvalue")
+    check(src:find("if IsSecret%(prefix%) or IsSecret%(text%) or IsSecret%(senderID%) or prefix ~= PREFIX") ~= nil,
+          "the event's arguments are secret-checked before the prefix is compared")
 end
 
 done("test_secrets")

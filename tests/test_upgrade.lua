@@ -126,12 +126,28 @@ do
     local _, lateWhy = late.Send("x")
     eq(lateWhy, "not-ready", "  it hands out an inert instance")
     eq(lib.byTag.Late, nil, "  which is not registered")
+    eq(type(inst.Peers()), "table", "an inert Peers is still a table")
+    local okIter = pcall(function() for _ in inst.Diagnostics() do end end)
+    check(okIter, "  and an inert Diagnostics still an iterator")
+    eq(type(late.Peers()), "table", "  for an inert New's instance too")
     eq(#lib.instances, 1, "  nor counted among the instances")
     local sent = #WoW.sent
     B:send("GlassChat", "while inert", { sid = "1760000000098" })
     eq(#box, 0, "events are gated: nothing is delivered")
     WoW.advance(120)
     eq(#WoW.sent, sent, "  and the ticker sends nothing")
+end
+
+-- 4b. A scan timer that fires while the library is not ready doesn't leave
+--     its pending flag set (rescans would stay off once it is ready again).
+do
+    local lib, inst = session()
+    lib.impl.RequestScan()
+    local ready = lib.ready
+    lib.ready = ready - 1                    -- a half-loaded moment
+    WoW.advance(3)
+    lib.ready = ready
+    eq(lib.state.scanPending, false, "the pending flag is cleared")
 end
 
 -- 5. The completion marker is the last line, and MINOR is written once.

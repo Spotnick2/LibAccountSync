@@ -70,6 +70,8 @@ with `pwsh ..\LibAccountSync\Tools\deploy.ps1 -Addon <YourAddon>`.
   could relay proofs; the stream MAC keeps such a relay from changing what you send. Details:
   `docs/PLAN.md`.
 - `"sent"` means handed to the wire. There is no delivery acknowledgement in r1.
+- For a blank-presence sender, the proof binds the name lower-cased: compare `sender.name`
+  case-insensitively (character names are unique across the region).
 
 ## Where it comes from
 

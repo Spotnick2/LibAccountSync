@@ -29,9 +29,12 @@ local function Where()
     return name .. "-" .. realm
 end
 
+-- Is it a secret? Asked before ANY comparison or truth test of a client value.
+local function IsS(v) return issecretvalue ~= nil and issecretvalue(v) == true end
+
 -- A value for the log, never touching a secret.
 local function V(v)
-    if issecretvalue and issecretvalue(v) then return "<secret>" end
+    if IsS(v) then return "<secret>" end
     if type(v) == "string" then return ("%q"):format(v) end
     return tostring(v)
 end
@@ -60,9 +63,14 @@ local function Payload(n)
     return table.concat(t)
 end
 
+local function Sized(n)
+    local head = "SIZE|" .. n .. "|"
+    return head .. Payload(math.max(0, n - #head))
+end
+
 local function Send(n)
-    n = tonumber(n) or 1000
-    local payload = "SIZE|" .. n .. "|" .. Payload(n)
+    n = math.min(tonumber(n) or 1000, 32768)
+    local payload = Sized(n)
     lastSendAt = debugprofilestop()
     local count, why = Sync.Send(payload, function(sender, status, reason)
         Log(("  onResult %s: %s %s after %.0f ms"):format(V(sender.name), status, tostring(reason),
@@ -88,7 +96,7 @@ local function OnMessage(payload, sender, sid)
         verdict = payload == "BYTES|" .. table.concat(t) .. table.concat(t) and "BYTES OK" or "BYTES CORRUPTED"
     elseif kind == "SIZE" then
         local n = tonumber(payload:match("^SIZE|(%d+)|"))
-        verdict = (n and payload == "SIZE|" .. n .. "|" .. Payload(n)) and ("SIZE OK " .. n) or "SIZE CORRUPTED"
+        verdict = (n and payload == Sized(n)) and ("SIZE OK " .. n) or "SIZE CORRUPTED"
     end
     Log(("received %d bytes from %s (%s, %s) sid %s: %s"):format(#payload, V(sender.name), V(sender.guid),
         sender.proven, tostring(sid), verdict))
@@ -108,7 +116,7 @@ local GAME_FIELDS = { "isOnline", "clientProgram", "isInCurrentRegion", "charact
                       "wowProjectID", "regionID", "factionName", "realmName", "gameAccountID" }
 
 local function Record(label, g)
-    if issecretvalue and issecretvalue(g) then Log("  " .. label .. ": the record itself is <secret>"); return end
+    if IsS(g) then Log("  " .. label .. ": the record itself is <secret>"); return end
     if type(g) ~= "table" then Log("  " .. label .. ": " .. V(g)); return end
     local parts = {}
     for _, k in ipairs(GAME_FIELDS) do parts[#parts + 1] = k .. "=" .. V(g[k]) end
@@ -119,7 +127,7 @@ local function Ids()
     Log("== ids (raw records) ==")
     for id = 1, 128 do
         local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
-        if ok and g ~= nil then Record("id " .. id, g) end
+        if ok and (IsS(g) or type(g) == "table") then Record("id " .. id, g) end
     end
 end
 
@@ -128,23 +136,24 @@ local function Secrets()
     local any = false
     for id = 1, 128 do
         local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
-        if ok and g ~= nil then
-            if issecretvalue(g) then Log("  id " .. id .. ": record is secret"); any = true
-            else
-                for _, k in ipairs(GAME_FIELDS) do
-                    if issecretvalue(g[k]) then Log(("  id %d: %s is secret"):format(id, k)); any = true end
-                end
+        if ok and IsS(g) then
+            Log("  id " .. id .. ": record is secret"); any = true
+        elseif ok and type(g) == "table" then
+            for _, k in ipairs(GAME_FIELDS) do
+                if IsS(g[k]) then Log(("  id %d: %s is secret"):format(id, k)); any = true end
             end
         end
     end
     local ok, a = pcall(C_BattleNet.GetAccountInfoByGUID, UnitGUID("player"))
-    if ok and type(a) == "table" then
+    if ok and IsS(a) then
+        Log("  own account record is secret"); any = true
+    elseif ok and type(a) == "table" then
         for _, k in ipairs({ "bnetAccountID", "battleTag" }) do
-            if issecretvalue(a[k]) then Log("  own account " .. k .. " is secret"); any = true end
+            if IsS(a[k]) then Log("  own account " .. k .. " is secret"); any = true end
         end
     end
     local _, presence, tag = pcall(BNGetInfo)
-    if issecretvalue(presence) or issecretvalue(tag) then Log("  BNGetInfo returns a secret"); any = true end
+    if IsS(presence) or IsS(tag) then Log("  BNGetInfo returns a secret"); any = true end
     Log(any and "secrets: some fields are secret (see above)" or "secrets: none seen")
 end
 
@@ -153,7 +162,7 @@ local function Region()
     Log("  GetCurrentRegion() -> " .. V(GetCurrentRegion and GetCurrentRegion()))
     Log("  WOW_PROJECT_ID -> " .. V(rawget(_G, "WOW_PROJECT_ID")))
     local ok, a = pcall(C_BattleNet.GetAccountInfoByGUID, UnitGUID("player"))
-    Record("own (GetAccountInfoByGUID.gameAccountInfo)", ok and type(a) == "table" and a.gameAccountInfo or nil)
+    Record("own (GetAccountInfoByGUID.gameAccountInfo)", (ok and not IsS(a) and type(a) == "table") and a.gameAccountInfo or a)
     local okG, g = pcall(C_BattleNet.GetGameAccountInfoByGUID, UnitGUID("player"))
     Record("own (GetGameAccountInfoByGUID)", okG and g or nil)
     Ids()
@@ -162,14 +171,15 @@ end
 local loginAt = GetTime()
 local function Friends(label)
     local ok, n = pcall(BNGetNumFriends)
-    if not ok or issecretvalue(n) then Log("friends " .. label .. ": BNGetNumFriends failed"); return end
+    if not ok or IsS(n) or type(n) ~= "number" then Log("friends " .. label .. ": BNGetNumFriends failed"); return end
     local accounts, missing = 0, 0
-    for i = 1, n or 0 do
+    for i = 1, n do
         local okN, m = pcall(C_BattleNet.GetFriendNumGameAccounts, i)
-        if okN and not issecretvalue(m) then
-            for j = 1, m or 0 do
+        if okN and not IsS(m) and type(m) == "number" then
+            for j = 1, m do
                 local okI, gi = pcall(C_BattleNet.GetFriendGameAccountInfo, i, j)
-                if okI and type(gi) == "table" and not issecretvalue(gi.gameAccountID) and gi.gameAccountID then
+                if okI and not IsS(gi) and type(gi) == "table" and not IsS(gi.gameAccountID)
+                    and type(gi.gameAccountID) == "number" then
                     accounts = accounts + 1
                 else
                     missing = missing + 1
@@ -186,9 +196,11 @@ end
 local function Presence()
     local _, presenceID, tag = pcall(BNGetInfo)
     local ok, a = pcall(C_BattleNet.GetAccountInfoByGUID, UnitGUID("player"))
+    local id, t = "?", "?"
+    if ok and IsS(a) then id, t = "<secret>", "<secret>"
+    elseif ok and type(a) == "table" then id, t = V(a.bnetAccountID), V(a.battleTag) end
     Log(("presence: BNGetInfo presenceID=%s tag=%s; GetAccountInfoByGUID bnetAccountID=%s tag=%s"):format(
-        V(presenceID), V(tag), V(ok and type(a) == "table" and a.bnetAccountID or nil),
-        V(ok and type(a) == "table" and a.battleTag or nil)))
+        V(presenceID), V(tag), id, t))
 end
 
 local function Ping(id)
@@ -215,7 +227,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         C_Timer.After(8, Status)
     elseif event == "BN_CHAT_MSG_ADDON" then
         local prefix, text, _, senderID = ...
-        if prefix ~= PROBE_PREFIX then return end
+        if IsS(prefix) or prefix ~= PROBE_PREFIX then return end
         local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, senderID)
         Log(("PING received from id %s: %s"):format(V(senderID), V(text)))
         Record("  its record", ok and g or nil)

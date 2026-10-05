@@ -1,0 +1,9 @@
+# Compiled Lua / syntax-check output
+luac.out
+
+# Per-machine Claude Code settings
+.claude/settings.local.json
+
+# Packager output
+.release/
+*.zip

@@ -259,7 +259,10 @@ on each `Send`, and read as the maximum across stores.
 
 ### Other fields
 - `selfProject` and `selfRegion` (our game and region, as last known) are taken from the store
-  with the newest `selfAt`.
+  with the newest `selfAt`. Since MINOR 3 (#7), when our own presence can't say AND nothing is
+  stored (a first run), the client's own `WOW_PROJECT_ID` and `GetCurrentRegion()` stand in,
+  measured equal to Battle.net's values (§7.8). They are never saved: `WOW_PROJECT_ID` is a global
+  another addon could overwrite, so it must not replace a value learned from a live presence.
 - `enabled` is per host. The library is active while any instance is enabled. When none is, its
   session state is wiped and nothing is sent.
 
@@ -520,7 +523,11 @@ wire log and a Python reader like `read-wirelog.py`.
    - the time to discover is logged;
    - a **one-sided** blank presence delivers both ways.
 4. **SHA-256 cost** for 16 and 32 KB, timed with `debugprofilestop`. **Threshold: more than
-   100 ms in one frame** brings back coroutine hashing, or lowers the default `maxPayload`.
+   100 ms in one frame** brings back a faster hash (and, if needed, coroutine hashing). (Lowering
+   the default `maxPayload` was the original alternative; see below.) Measured 2026-10-05: 249 ms for 16 KB, over the threshold (#8). A lower default would break the
+   contract within MAJOR, so MINOR 3 uses the client's `bit` library instead, kept only if it
+   reproduces the FIPS digests at load, with the pure-Lua path as the fallback. `/lasprobe hash`
+   reports which path ran; hashing across frames is the next step only if `bit` is still over.
 5. **ChatThrottleLib throughput** for 16 and 32 KB, plus any loss or reordering.
 6. **Which Battle.net fields are secret**, if any, logged through `issecretvalue`.
 7. **When the friends list becomes complete** after login, to check the 60 s wait.

@@ -400,7 +400,7 @@ end
 
 -- 15. Our presence blank and our game never seen: fail closed, no hellos.
 do
-    local lib, inst, store = session(nil, { before = function() WoW.bn.blank = true end })
+    local lib, inst, store = session(nil, { before = function() WoW.bn.blank = true; WoW.noClientConstants() end })
     local B = Peer.new({ blank = true })
     inst.Rescan()
     eq(#sentTo(3), 0, "with our game unknown, nothing is sent")

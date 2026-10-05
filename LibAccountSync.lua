@@ -27,7 +27,7 @@
 -- - lib.ready = MINOR is the last line: a copy that threw partway leaves every
 --   entry point inert.
 
-local MAJOR, MINOR = "LibAccountSync-1.0", 2
+local MAJOR, MINOR = "LibAccountSync-1.0", 3
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end   -- an equal or newer copy is already loaded
 
@@ -103,9 +103,12 @@ lib.IsReady = Ready
 -- SHA-256 and HMAC-SHA-256, pure Lua 5.1 (from AltStable Core.lua 728-849)
 --------------------------------------------------------------------------------
 -- The client offers addons no hash, and LibDeflate's checksums are linear.
--- Arithmetic only, no `bit` library, so the game and the tests run the same
--- code. Checked against the FIPS 180-2 and RFC 4231 vectors (test_crypto).
+-- Pure arithmetic, checked against the FIPS 180-2 and RFC 4231 vectors
+-- (test_crypto). In game, bxor and band switch to the client's `bit` library
+-- when it passes the self-check below (#8); desktop tests run the pure-Lua
+-- path, and the `bit` path through stubs (test_crypto).
 local SHA256, HMAC256
+local HASH_PATH = "lua"                -- "bit" when the client's bit library passed its check
 do
     local TWO32 = 4294967296
     local XOR4, AND4 = {}, {}
@@ -200,6 +203,54 @@ do
 
     local function hex(s)
         return (s:gsub(".", function(ch) return ("%02x"):format(ch:byte()) end))
+    end
+
+    -- WoW's own `bit` library (8 functions in the 1.60.1 dump) does in C what
+    -- nib does with table lookups (#8: the pure-Lua path took 249 ms for 16 KB
+    -- in game). Only bxor and band move: they are the slow ones; shr and ror
+    -- are already table-free arithmetic. How `bit` treats signs and values past
+    -- 2^31 is unmeasured, so results are folded into 0..2^32-1, and the fast
+    -- path is kept only if (1) it equals the pure-Lua bxor/band on edge
+    -- operands and a fixed spread of others, and (2) it reproduces FIPS 180-2
+    -- digests. Anything else, an error included, keeps the pure-Lua path: a
+    -- wrong hash never reaches a MAC.
+    do
+        local B = rawget(_G, "bit")
+        if type(B) == "table" and type(B.bxor) == "function" and type(B.band) == "function" then
+            local bx, ba = B.bxor, B.band
+            local fastXor = function(a, b) return bx(a, b) % TWO32 end
+            local fastAnd = function(a, b) return ba(a, b) % TWO32 end
+            local function agrees()
+                local edges = { 0, 1, 2147483647, 2147483648, 2147483649, 4294967294, 4294967295 }
+                local vals = {}
+                for _, v in ipairs(edges) do vals[#vals + 1] = v end
+                local x = 12345
+                for _ = 1, 24 do                  -- a fixed LCG spread over the whole range
+                    x = (x * 1103515245 + 12345) % TWO32
+                    vals[#vals + 1] = x
+                end
+                for _, a in ipairs(vals) do
+                    for _, b in ipairs(vals) do
+                        if fastXor(a, b) ~= bxor(a, b) or fastAnd(a, b) ~= band(a, b) then return false end
+                    end
+                end
+                return true
+            end
+            local okA, same = pcall(agrees)
+            if okA and same then
+                local slowXor, slowAnd = bxor, band
+                bxor, band = fastXor, fastAnd
+                local ok1, d1 = pcall(digest, "abc")
+                local ok2, d2 = pcall(digest, string.rep("a", 1000))
+                if ok1 and ok2
+                    and hex(d1) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+                    and hex(d2) == "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3" then
+                    HASH_PATH = "bit"
+                else
+                    bxor, band = slowXor, slowAnd
+                end
+            end
+        end
     end
 
     function SHA256(msg) return hex(digest(msg)) end
@@ -589,14 +640,31 @@ function I.Self()
             s.game = s.game or g.gameAccountID
         end
     end
+    -- Our game and region: a live presence's (saved); else the values last
+    -- saved; else, nothing ever saved (a first run with a blank presence), the
+    -- client's own constants (#7). Those are never saved: WOW_PROJECT_ID is a
+    -- global another addon could overwrite, and it must not replace a value
+    -- learned from a live presence.
     if type(s.project) == "number" and type(s.region) == "number" then
         I.SaveSelf(s.project, s.region)
     else
         s.project, s.region = I.SavedSelf()
+        if s.project == nil then s.project, s.region = I.ClientSelf() end
     end
     if type(s.tag) ~= "string" or s.tag == "" then s.tag = nil end
     if s.tag == nil and s.account == nil then return nil end
     return s
+end
+
+-- The client's own project and region, measured equal to Battle.net's on
+-- both accounts (#7, PLAN §7.8), or nil, nil unless both are plain positive
+-- numbers. WOW_PROJECT_ID isn't in the API dump, though it exists at runtime.
+function I.ClientSelf()
+    local p = rawget(_G, "WOW_PROJECT_ID")
+    if IsSecret(p) or type(p) ~= "number" or p <= 0 then return nil, nil end
+    local _, r = pcall(GetCurrentRegion)        -- a throw leaves an error string: refused below
+    if IsSecret(r) or type(r) ~= "number" or r <= 0 then return nil, nil end
+    return p, r
 end
 
 -- Ownership by BattleTag; by account id only when both ids came from
@@ -1555,7 +1623,7 @@ end
 for _, inst in ipairs(lib.instances) do I.Migrate(inst) end
 
 -- The test seam: the crypto and codec, for building the other side's frames.
-lib._test = { SHA256 = SHA256, HMAC256 = HMAC256, Encode = Encode, Decode = Decode, PREFIX = PREFIX,
+lib._test = { SHA256 = SHA256, HMAC256 = HMAC256, HASH_PATH = HASH_PATH, Encode = Encode, Decode = Decode, PREFIX = PREFIX,
               BODY_FIRST = BODY_FIRST, BODY_REST = BODY_REST, MAX_CHUNKS = MAX_CHUNKS }
 
 lib.ready = MINOR

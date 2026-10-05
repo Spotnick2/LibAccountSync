@@ -98,7 +98,25 @@ local M = {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
           '    if second ~= nil and second ~= "" then' } } },
     { "MINOR not raised over the pilot copy", {
-        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 2', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 3', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+    -- (No "MINOR left at 2" mutation: that is what test_upgrade 4d's freeze
+    -- guard catches in a normal run, since r2's manifest no longer matches,
+    -- and that guard is off here because every mutant differs from r2.)
+    { "the bit path skips the operand check", { { "            if okA and same then", "            if true then" } } },
+    { "the bit path skips the digest check", {
+        { "                if ok1 and ok2\n", "                if true or ok1 and ok2\n" } } },
+    { "a refused bit path is not undone", { { "                    bxor, band = slowXor, slowAnd\n", "" } } },
+    { "the stored values are not the fallback", { { "        s.project, s.region = I.SavedSelf()\n        if s.project", "        s.project, s.region = nil, nil\n        if s.project" } } },
+    { "the client's constants are never used", { { "        if s.project == nil then s.project, s.region = I.ClientSelf() end\n", "" } } },
+    { "the client's constants win over the stored values", {
+        { "        s.project, s.region = I.SavedSelf()\n        if s.project == nil then s.project, s.region = I.ClientSelf() end",
+          "        s.project, s.region = I.ClientSelf()\n        if s.project == nil then s.project, s.region = I.SavedSelf() end" } } },
+    { "a project of 0 is used", { { '    if IsSecret(p) or type(p) ~= "number" or p <= 0 then return nil, nil end', '    if IsSecret(p) or type(p) ~= "number" then return nil, nil end' } } },
+    { "a non-number project is used", { { '    if IsSecret(p) or type(p) ~= "number" or p <= 0 then return nil, nil end', '    if IsSecret(p) then return nil, nil end' } } },
+    { "a region of 0 is used", { { '    if IsSecret(r) or type(r) ~= "number" or r <= 0 then return nil, nil end', '    if IsSecret(r) or type(r) ~= "number" then return nil, nil end' } } },
+    -- (No mutation for IsSecret on the client constants, project or region: a newproxy secret has
+    -- type "userdata", so the type check after it hides the difference under
+    -- the stubs. In the client a secret keeps its type, hence the check.)
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },

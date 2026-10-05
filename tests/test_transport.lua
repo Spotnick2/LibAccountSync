@@ -172,6 +172,27 @@ do
     eq(box[1] and box[1].sender.name, "Second", "  as the new character")
 end
 
+-- 7d. A verified character's older stream still in flight when the account
+--     switches character is never delivered as the new character, and so
+--     can't slip under the new character's sid floor (Codex, r1 round 2).
+do
+    local lib, inst, store, A = verified()
+    local box = inbox(inst)
+    local old = A:frames("GlassChat", string.rep("o", 400), { sid = "1760000000001" })
+    A:deliver(old[1])                        -- A's older snapshot starts
+    A:send("GlassChat", "A newer", { sid = "1760000000002" })
+    eq(#box, 1, "A's newer snapshot lands")
+    -- The account now plays character B; B says hello.
+    local Bc = Peer.new({ id = 3, name = "Bravo", guid = "Player-1-000000B2", nonce = "b2b2b2b2b2b2b2b2" })
+    Bc:deliver(Bc:hello({ key = OTHER_KEY }))
+    for i = 2, #old do A:deliver(old[i]) end
+    WoW.advance(11)
+    eq(#box, 1, "A's older stream is not delivered, as B or as anyone")
+    -- B's own stream on that account is delivered as B.
+    Bc:send("GlassChat", "from Bravo", { sid = "1760000000003" })
+    eq(box[2] and box[2].sender.name, "Bravo", "the new character's own stream is delivered as it")
+end
+
 -- 8. A complete stream whose hello never comes is dropped after 10 s.
 do
     local store = seasoned()

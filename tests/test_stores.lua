@@ -73,6 +73,26 @@ do
     eq(a.key, K1, "  and a store's existing key is still never overwritten")
 end
 
+-- 2b. A host whose getter resolves after the key was chosen (it registered
+--     while nil) gets the key on the next scan, with no send needed.
+do
+    WoW.reset(); WoW.resetLibStub()
+    local lib = loadLibrary()
+    local a = { key = K1, keyAt = 10 }
+    newHost(lib, "GlassChat", a)
+    login()
+    WoW.advance(61)
+    Peer.new({})
+    lib.byTag.GlassChat.Rescan()
+    eq(lib.state.key, K1, "the key is chosen")
+    local late = nil
+    lib:New({ addon = "AltStable", store = function() return late end })
+    late = {}
+    lib.byTag.GlassChat.Rescan()
+    eq(late.key, K1, "a store that resolves later gets the household key")
+    eq(late.keyAt, 10, "  with its keyAt")
+end
+
 -- 3. A store with no key gets the frozen key, with its keyAt.
 do
     WoW.reset(); WoW.resetLibStub()
@@ -229,6 +249,21 @@ do
     lib = loadLibrary()
     A = newHost(lib, "GlassChat", a)
     eq(A.IsEnabled(), false, "the switch holds next session")
+end
+
+-- 8b. A switch flipped this session wins over a read-only newer store.
+do
+    WoW.reset(); WoW.resetLibStub()
+    local lib = loadLibrary()
+    local newer = { v = 2, enabled = true }
+    local A = newHost(lib, "GlassChat", newer)
+    A.SetEnabled(false)
+    eq(A.IsEnabled(), false, "SetEnabled(false) holds even when the store can't be written")
+    eq(newer.enabled, true, "  and the newer store is untouched")
+    local older = { v = 2, enabled = false }
+    local Bh = newHost(lib, "AltStable", older)
+    Bh.SetEnabled(true)
+    eq(Bh.IsEnabled(), true, "SetEnabled(true) holds over a newer store's false")
 end
 
 -- 9. Our game and region as last known come from the newest store.

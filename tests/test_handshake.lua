@@ -205,6 +205,20 @@ do
     eq(#sentTo(3, "H1|"), n, "five minutes of scans send a known peer no more hellos")
 end
 
+-- 11c. A delayed hello from the character that was there before is
+--      rejected without touching the current character's nonce.
+do
+    local lib, inst = session()
+    local B = Peer.new({})
+    inst.Rescan()
+    B:deliver(B:hello({ key = B.key }))
+    local C = Peer.new({ id = 3, name = "Charlie", guid = "Player-1-000000C3", nonce = "c3c3c3c3c3c3c3c3" })
+    C:deliver(C:hello({ key = C.key }))
+    eq(lib.state.theirNonce[3], "c3c3c3c3c3c3c3c3", "the new character's nonce is held")
+    B:deliver(B:hello({ key = B.key, nonce = "0b0b0b0b0b0b0b0b" }))
+    eq(lib.state.theirNonce[3], "c3c3c3c3c3c3c3c3", "a delayed hello from the old character leaves it alone")
+end
+
 -- 12. A shared key (a settings folder copied between our accounts): the lower
 --     GUID makes a new key; the higher keeps its own (§3, round 2).
 do

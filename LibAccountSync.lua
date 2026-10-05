@@ -837,6 +837,10 @@ function I.OnHello(id, text)
     if nonce == S.myNonce[id] then return end                     -- reflection
     local me = I.Self()
     local g = I.OwnAccountGame(id, me)
+    -- Battle.net knows them: the hello must agree with it, checked BEFORE
+    -- anything is kept (a delayed hello from the character that was there
+    -- before must not replace the current one's nonce, Codex round 2 of r1).
+    if g and (Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid)) then return end
     local friends = not g and I.FriendGameIDs() or nil
     local hinted = not g and I.OwnByElimination(id, me, friends)
     -- Their nonce is kept only from an id that is ours, a hint, or proven
@@ -845,8 +849,7 @@ function I.OnHello(id, text)
     if fresh and (g or hinted or S.learned[id]) then S.theirNonce[id] = nonce end
     local peer
     if g then
-        -- Battle.net knows them: the hello must agree with it.
-        if Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid) then return end
+        if S.peers[id] and S.peers[id].guid ~= g.playerGuid then S.routeChecked[id] = nil end
         if key ~= "" then
             local own = I.OwnKey()
             if not own then
@@ -933,7 +936,9 @@ function I.Scan()
         I.ReportOnce("prefix", "LibAccountSync: the addon-message prefix could not be registered; nothing arrives.", "error")
     end
     if not I.Active() then I.WipeSession(); return end
-    I.OwnKey()             -- settles the key (and any keys waiting on it) once every store resolves
+    -- Settles the key (and any keys waiting on it) once every store resolves,
+    -- and brings a store that resolved later (load-on-demand) in line.
+    if I.OwnKey() then I.SyncStores() end
     for id in pairs(S.learned) do
         local g = I.GameRec(id)
         if not g or g.unknown or g.isOnline == false then I.ForgetId(id) end
@@ -1215,12 +1220,20 @@ end
 function I.TryDeliver(key, buf)
     local id = buf.id
     local now = I.GameFor(id)
+    local was = buf.peer                  -- the binding when the stream was admitted
     local sender
-    if now and now.proven == "bnet" then
-        sender = now
-    elseif buf.verified and buf.peer then
-        sender = buf.peer
+    if was and was.proven == "bnet" and (not now or now.guid == was.guid) then
+        -- Battle.net vouched for this character when its stream began, and
+        -- it is still the one there (or has logged out since: send, then log
+        -- out, still delivers).
+        sender = now or was
+    elseif now and now.proven == "bnet" and was and was.guid == now.guid then
+        sender = now                      -- guessed then, verified now: the same character
     elseif now and S.myNonce[id] and buf.mac then
+        -- Anything else (a character change on that account since the stream
+        -- began, a binding we only guessed) is decided by the MAC, bound to the
+        -- character the account shows NOW: an older character's stream can't
+        -- be passed off as the new one's (Codex round 2 of r1).
         local me = I.Self()
         if not me or me.project == nil or me.region == nil then return false end
         local hash = SHA256(buf.payload)
@@ -1358,10 +1371,13 @@ function I.Rescan()
     if S.loggedIn then I.Scan() end
 end
 
+-- A switch flipped this session wins (a newer store may be read-only); else
+-- the host's store; else on.
 function I.IsEnabled(inst)
+    if inst.enabled ~= nil then return inst.enabled end
     local ok, t = pcall(inst.getStore)
     if ok and type(t) == "table" and t.enabled ~= nil then return t.enabled ~= false end
-    return inst.enabled ~= false
+    return true
 end
 
 function I.SetEnabled(inst, on)

@@ -31,16 +31,10 @@ local M = {
     { "region: no fallback check", { { 'elseif g.isInCurrentRegion ~= true then', 'elseif false then' } } },
     { "region: mismatch passes", { { 'if g.regionID ~= me.region then return nil, "another region" end', '' } } },
     { "the key goes to any id", { { 'local key = I.OwnAccountGame(id, me) and K or ""', 'local key = K' } } },
-    { "a hello contradicting Battle.net is kept", {
-        { 'if Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid) then return end',
-          'if guid ~= "" and guid ~= g.playerGuid then return end' } } },
     { "a key or proof is believed from any id", { { "elseif hinted or S.myNonce[id] then", "elseif true then" } } },
     { "anyone's nonce is kept", { { "if fresh and (g or hinted or S.learned[id]) then", "if fresh then" } } },
     { "our own name is accepted", { { "if Short(name) == Short(PlayerName()) then return end", "" } } },
     { "a reflected nonce is accepted", { { "if nonce == S.myNonce[id] then return end                     -- reflection", "" } } },
-    { "a hello's GUID is not checked", {
-        { 'if Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid) then return end',
-          'if Short(g.characterName) ~= Short(name) then return end' } } },
     { "a hello to every peer every scan", { { "if not known[id] or not S.theirNonce[id] then I.SendHello(id) end",
                                               "I.SendHello(id)" } } },
     { "a stranger's frames are remembered", { { "if not p and not S.myNonce[id] then return end",
@@ -71,6 +65,22 @@ local M = {
     { "the prefix compared before the secret check", {
         { "if IsSecret(prefix) or IsSecret(text) or IsSecret(senderID) or prefix ~= PREFIX then",
           "if prefix ~= PREFIX or IsSecret(text) or IsSecret(senderID) then" } } },
+    { "a changed character's stream is delivered as the new one", {
+        { "    if was and was.proven == \"bnet\" and (not now or now.guid == was.guid) then",
+          "    if now and now.proven == \"bnet\" then" } } },
+    { "a stale hello's nonce is kept", {
+        { "    if g and (Short(g.characterName) ~= Short(name) or (guid ~= \"\" and guid ~= g.playerGuid)) then return end\n", "" } } },
+    { "a late store is not synced", { { "    if I.OwnKey() then I.SyncStores() end", "    I.OwnKey()" } } },
+    { "the store's switch wins over the session's", { { "    if inst.enabled ~= nil then return inst.enabled end\n", "" } } },
+    { "a hello contradicting Battle.net is kept", {
+        { 'if g and (Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid)) then return end',
+          'if g and (guid ~= "" and guid ~= g.playerGuid) then return end' } } },
+    { "a hello's GUID is not checked", {
+        { 'if g and (Short(g.characterName) ~= Short(name) or (guid ~= "" and guid ~= g.playerGuid)) then return end',
+          'if g and (Short(g.characterName) ~= Short(name)) then return end' } } },
+    { "a proven peer passes without a MAC", {
+        { "    elseif now and S.myNonce[id] and buf.mac then",
+          "    elseif now then\n        sender = now\n    elseif now and S.myNonce[id] and buf.mac then" } } },
     -- Our own key never counts as trusted (§3)
     { "TrustUnion keeps our own key", { { 'and type(seen) == "number" and k ~= S.key then',
                                           'and type(seen) == "number" then' } } },
@@ -85,7 +95,6 @@ local M = {
           'DATA_DOMAIN .. receiverNonce .. "|" .. tostring(project)' } } },
     { "the MAC is not checked", { { "buf.tag, buf.sidText, buf.n, hash) == buf.mac then",
                                     "buf.tag, buf.sidText, buf.n, hash) ~= nil then" } } },
-    { "a proven peer passes without a MAC", { { 'if now and now.proven == "bnet" then', 'if now then' } } },
     { "a complete stream is not kept for its hello", {
         { "buf.awaitUntil = time() + AWAIT_HELLO\n        I.ArmSettle(key, buf)", "S.buffers[key] = nil" } } },
     { "no recheck when a hello lands", { { "    I.SendHello(id, \"answer\")\n    I.RecheckAwaiting(id)",

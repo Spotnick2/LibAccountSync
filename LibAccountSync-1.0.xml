@@ -1,0 +1,27 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <!--
+        Embedded into a consuming addon through .pkgmeta externals, e.g.
+
+            externals:
+              Libs/LibAccountSync-1.0:
+                url: https://github.com/Spotnick2/LibAccountSync
+                tag: r1
+
+        and then loaded from that addon's TOC before any of its own files:
+
+            Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml
+
+        LibStub and ChatThrottleLib (v32, public domain) are bundled rather than
+        pulled separately: each resolves to a single, newest instance however
+        many copies load, and neither derives paths from where it sits
+        (docs/PLAN.md section 6).
+    -->
+    <!--
+        Only files that exist. A missing file here is a load error in every
+        addon that embeds the library, and tests/harness.lua loads exactly this
+        list so the suite fails the same way the client would.
+    -->
+    <Script file="LibStub\LibStub.lua"/>
+    <Script file="ChatThrottleLib\ChatThrottleLib.lua"/>
+    <Script file="LibAccountSync.lua"/>
+</Ui>

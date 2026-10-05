@@ -1,0 +1,39 @@
+name: Check
+
+# The library is never packaged on its own (no TOC: the packager would stop),
+# so this is syntax and tests only. What a consumer's zip holds under
+# Libs/LibAccountSync-1.0/ is asserted in the pilot consumer's CI (GlassChat).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.1
+
+      # WoW runs Lua 5.1, so the tests do too. tests/run.ps1 is the Windows
+      # entry point for the same files.
+      - name: Syntax-check the Lua
+        run: |
+          count=$(find . -name '*.lua' -not -path './.git/*' | wc -l)
+          test "$count" -gt 0 || { echo "no Lua files found - the check would prove nothing"; exit 1; }
+          echo "checking $count files"
+          find . -name '*.lua' -not -path './.git/*' -print0 | xargs -0 luac5.1 -p
+
+      - name: Unit tests
+        run: |
+          for f in tests/test_*.lua; do
+            echo "-- $f"
+            lua5.1 "$f" || exit 1
+          done

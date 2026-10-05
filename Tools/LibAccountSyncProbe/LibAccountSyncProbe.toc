@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: LibAccountSync Probe
+## Notes: In-game measurement probe for LibAccountSync-1.0 (docs/PLAN.md section 7). Never shipped: lives under Tools/, which every consumer's .pkgmeta ignores.
+## Author: Spotnick
+## Version: dev
+## SavedVariables: LibAccountSyncProbeDB
+
+Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml
+Probe.lua

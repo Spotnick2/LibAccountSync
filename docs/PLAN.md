@@ -533,6 +533,10 @@ wire log and a Python reader like `read-wirelog.py`.
 
    If yes, a friend can make themselves look like ours by elimination whenever they like, and the
    deferred relay items (§5.4) come back **before r1 is tagged**.
+
+   **Owner decision, 2026-10-05 (#1):** `r2`, the first tag, was released before §7 was
+   measured; the probe had not been deployed. §7.9 is still owed, and a positive result brings the
+   deferred relay items into the next MINOR rather than blocking a tag that already exists.
 10. Does `BNGetInfo`'s `presenceID` equal our `bnetAccountID`? Recorded for completeness;
     ownership is matched by BattleTag anyway (§5.2).
 
@@ -633,7 +637,9 @@ red:
 1. Implement r1 with the tests above.
 2. GlassChat embeds it, pinned by `commit:`, and builds `/gchat ignore send`. The receiver applies
    the whole snapshot, removals included, with no merge.
-3. Run the two-account in-game check, §7 including the §7.9 gate. Then tag `r1`
+3. Run the two-account in-game check, §7 including the §7.9 gate. Then tag `r1`. (As released:
+   MINOR 1 failed the pilot, #4; `r2` was tagged after the pilot's two-account check passed, with
+   §7 deferred by the owner's decision of 2026-10-05, #1.)
    (EMBEDDED-LIBRARIES §9).
 
 ## 10. Review log

@@ -1,8 +1,11 @@
 -- test_upgrade.lua: upgrading in place (§4, EMBEDDED-LIBRARIES §5 and §8).
--- r1 has no released predecessor, so a SYNTHETIC newer copy (this source with
--- MINOR+1, a new function, and every lib.impl function wrapped in a call
--- counter) loads over the current one. From r2 on, released copies are frozen
--- in tests/fixtures/ and loaded under the current one.
+-- Three kinds of older/newer copy:
+-- - a SYNTHETIC newer copy (this source with MINOR+1, a new function, and every
+--   lib.impl function wrapped in a call counter) over the current one (2, 4);
+-- - the pilot copy cc92deb (MINOR 1, never released) under the current one (4c);
+-- - each RELEASED copy, frozen in tests/fixtures/LibAccountSync-rN.lua with a
+--   manifest of every file it shipped, under the current one (4d). A new
+--   release adds its fixture and manifest to RELEASED below.
 
 dofile("tests/wow_stubs.lua")
 dofile("tests/harness.lua")
@@ -171,6 +174,94 @@ do
     eq(B:ourHello() and B:ourHello().name, "Malas Belgarden", "the pilot's instance sends our whole name")
     B:deliver(B:hello({ key = B.key, name = "Karuzo" }))
     eq(lib.state.theirNonce[3], B.nonce, "  and matches an older peer's first-name hello by GUID")
+end
+
+-- 4d. Released copies (EMBEDDED-LIBRARIES §8, §9.4).
+local RELEASED = { 2 }                      -- every tagged rN, oldest first
+
+-- (a) A released MINOR is frozen: if a manifest exists for the current MINOR,
+--     every file the release shipped must still hash the same. A behaviour
+--     change raises MINOR first (CLAUDE.md, EMBEDDED-LIBRARIES §4).
+local function manifestOf(minor)
+    local f = io.open("tests/fixtures/LibAccountSync-r" .. minor .. ".manifest", "rb")
+    if not f then return nil end
+    local text = f:read("*a")
+    f:close()
+    local m = {}
+    for hash, path in text:gmatch("(%x+)  ([^\r\n]+)") do m[#m + 1] = { hash = hash, path = path } end
+    return m
+end
+local function drift(manifest, read)
+    local T = LibStub("LibAccountSync-1.0")._test
+    local out = {}
+    for _, e in ipairs(manifest) do
+        if T.SHA256(read(e.path)) ~= e.hash then out[#out + 1] = e.path end
+    end
+    return out
+end
+do
+    WoW.reset(); WoW.resetLibStub()
+    loadLibrary()
+    local m = manifestOf(MINOR)
+    local function current(path)
+        if path == "LibAccountSync.lua" then return runtimeSource() end
+        return (readFile(path):gsub("\r\n", "\n"))
+    end
+    if m then
+        check(#m >= 5, "the r" .. MINOR .. " manifest lists every shipped file")
+        -- Under tests/mutate.lua every mutant differs from the release, which
+        -- would turn each one red here and hide the mutations nothing else
+        -- catches; the guard itself is exercised just below instead.
+        if not os.getenv("LIBACCT_MUTANT") then
+            local changed = drift(m, current)
+            eq(#changed, 0, "MINOR " .. MINOR .. " is the released r" .. MINOR .. ": changed " .. table.concat(changed, ", ")
+               .. " (raise MINOR to change a release)")
+        end
+        -- The guard catches a change in the runtime and in a bundled file.
+        local function edited(target)
+            return function(path)
+                local s = current(path)
+                if path == target then s = s .. "\n-- edited" end
+                return s
+            end
+        end
+        eq(drift(m, edited("LibAccountSync.lua"))[1], "LibAccountSync.lua", "the guard sees a runtime edit")
+        eq(drift(m, edited("ChatThrottleLib/ChatThrottleLib.lua"))[1], "ChatThrottleLib/ChatThrottleLib.lua",
+           "  and an edit to a bundled file")
+    end
+end
+
+-- (b) Every released copy loads FIRST, a host makes its instance from it, and
+--     the current copy loads over it: an equal copy changes nothing, a newer
+--     one must take over the old instance, and either way the instance pairs
+--     and syncs.
+for _, r in ipairs(RELEASED) do
+    WoW.reset(); WoW.resetLibStub()
+    local lib = loadCopy(fixtureCopy("LibAccountSync-r" .. r .. ".lua"), "GlassChat")
+    eq(select(2, LibStub:GetLibrary(MAJOR)), r, "r" .. r .. " loads first, at MINOR " .. r)
+    local impl = {}
+    for k, v in pairs(lib.impl) do impl[k] = v end
+    local store = {}
+    local inst = newHost(lib, "GlassChat", store)
+    login()
+    WoW.advance(61)
+    loadLibrary("LibAccountSyncProbe")
+    eq(select(2, LibStub:GetLibrary(MAJOR)), math.max(r, MINOR), "  the newer of r" .. r .. " and the current copy wins")
+    eq(lib.ready, math.max(r, MINOR), "  complete")
+    if r == MINOR then
+        local same = true
+        for k, v in pairs(lib.impl) do if impl[k] ~= v then same = false end end
+        check(same, "  an equal current copy changes nothing")
+    end
+    local box = inbox(inst)
+    local B = Peer.new({})
+    inst.Rescan()
+    B:deliver(B:hello({ key = B.key }))
+    eq(inst.Peers()[1] and inst.Peers()[1].proven, "bnet", "  r" .. r .. "'s instance pairs")
+    B:send("GlassChat", "after loading over r" .. r)
+    eq(box[1] and box[1].payload, "after loading over r" .. r, "  and receives")
+    WoW.sent = {}
+    eq(inst.Send("x"), 1, "  and sends")
 end
 
 -- 5. The completion marker is the last line, and MINOR is written once.

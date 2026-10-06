@@ -9,8 +9,7 @@ Embedded with LibStub; players don't install it separately.
 > **Status:** `r3` released, its two-account pairing and sync validated in game (`r2` by
 > GlassChat's pilot; `r1` was never tagged, #4). Measured in game (#1): delivery across rulesets,
 > all byte values, no secret fields. **Open:** the §7.9 relay check and two other measurements that
-> need a Battle.net friend (#9); the `bit`-backed hash's speed in game (#8). GlassChat is the pilot
-> consumer.
+> need a Battle.net friend (#9). GlassChat is the pilot consumer.
 
 ## Using it
 
@@ -21,7 +20,8 @@ local Sync = LibStub("LibAccountSync-1.0"):New({
     -- It holds the household key: keep it out of any profile export.
     store = function() return GlassChatDB and GlassChatDB.accountSync end,
     report = function(text, kind) end,   -- optional
-    maxPayload = 16384,                  -- optional, at most 32768
+    maxPayload = 16384,                  -- optional, at most 32768 (hashing a full 32 KB send
+                                         -- costs about 130 ms in game; 16 KB about 65 ms, #8)
 })
 
 Sync.OnMessage(function(payload, sender, sid)

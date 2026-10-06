@@ -10,8 +10,8 @@ validated by GlassChat's pilot (#4). MINOR 1 was never tagged: its pilot copy, `
 first in-game check (#4). All three are frozen in `tests/fixtures/` (r2 and r3 with manifests).
 Seven of the ten `docs/PLAN.md` §7 measurements are done (#1). **Still owed (#9):** the §7.9 relay
 gate (needs a Battle.net friend as the test subject; a positive result brings the deferred relay
-protections into the next MINOR), §7.3 and §7.7. **Follow-up:** #8 stays open until `/lasprobe hash`
-measures the `bit` path in game. Scope (owner, 2026-10-05): same-Battle.net-account sync only. `docs/PLAN.md` is the reviewed design (two internal rounds plus
+protections into the next MINOR), §7.3 and §7.7. #8 measured: the `bit` path hashes 16 KB in 65 ms and 32 KB
+in 129 ms in game. Scope (owner, 2026-10-05): same-Battle.net-account sync only. `docs/PLAN.md` is the reviewed design (two internal rounds plus
 Codex round 3); **this is security code: a mistake hands a stranger the player's lists**, so any
 change to ownership, the proof, the MAC, the stores or the wire goes back through the plan and an
 adversarial review first.

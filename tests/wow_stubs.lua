@@ -3,7 +3,7 @@
 --
 -- What it models, on purpose:
 -- - STRICT globals: reading any global it does not define is an error. Each
---   stub is an API confirmed in the 1.60.1.70205 dump; defining something
+--   stub is an API confirmed in the 1.60.1.70235 dump; defining something
 --   Forever lacks is how a missing API survives into a build.
 -- - SECRETS as newproxy userdata: arithmetic, ordering, tostring, concat and
 --   indexing throw. Lua 5.1 cannot make a truth test or == throw, so those

@@ -6,11 +6,11 @@ with ownership proven before anything is sent or accepted.
 
 Embedded with LibStub; players don't install it separately.
 
-> **Status:** `r2` released, and its two-account pairing and sync validated in game by GlassChat's
-> pilot. (`r1` was never tagged: its pilot copy failed in game, #4.) Measured in game (#1):
-> delivery across rulesets, all byte values, no secret fields. **Open:** the §7.9 relay check and
-> two other measurements that need a Battle.net friend (#9); a 16 KB `Send` costs about 250 ms of
-> hashing (#8). GlassChat is the pilot consumer.
+> **Status:** `r3` released, its two-account pairing and sync validated in game (`r2` by
+> GlassChat's pilot; `r1` was never tagged, #4). Measured in game (#1): delivery across rulesets,
+> all byte values, no secret fields. **Open:** the §7.9 relay check and two other measurements that
+> need a Battle.net friend (#9); the `bit`-backed hash's speed in game (#8). GlassChat is the pilot
+> consumer.
 
 ## Using it
 
@@ -49,7 +49,7 @@ Within `LibAccountSync-1.0` this API only grows.
 externals:
   Libs/LibAccountSync-1.0:
     url: https://github.com/Spotnick2/LibAccountSync
-    tag: r2
+    tag: r3
 ignore:
   # CurseForge's packager doesn't apply an external's own ignore list:
   - Libs/LibAccountSync-1.0/tests

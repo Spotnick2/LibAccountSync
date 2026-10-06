@@ -4,13 +4,14 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
-**Status: `r2` released** (tag on `fdd4a72`, MINOR 2), validated by GlassChat's two-account pilot
-(#4). MINOR 1 was never tagged: its pilot copy, `cc92deb`, failed the first in-game check (#4) and
-is frozen in `tests/fixtures/` because GlassChat's pilot embedded it; `r2` is frozen there too.
+**Status: `r3` released** (tag on `6c888c5`, MINOR 3: #7 client project/region on a blank first
+run, #8 `bit`-backed SHA-256), validated by the two-account probe check. `r2` (`fdd4a72`) was
+validated by GlassChat's pilot (#4). MINOR 1 was never tagged: its pilot copy, `cc92deb`, failed the
+first in-game check (#4). All three are frozen in `tests/fixtures/` (r2 and r3 with manifests).
 Seven of the ten `docs/PLAN.md` §7 measurements are done (#1). **Still owed (#9):** the §7.9 relay
 gate (needs a Battle.net friend as the test subject; a positive result brings the deferred relay
-protections into the next MINOR), §7.3 and §7.7. **Follow-ups:** #7 (project and region from the
-client), #8 (SHA-256 cost per Send). Scope (owner, 2026-10-05): same-Battle.net-account sync only. `docs/PLAN.md` is the reviewed design (two internal rounds plus
+protections into the next MINOR), §7.3 and §7.7. **Follow-up:** #8 stays open until `/lasprobe hash`
+measures the `bit` path in game. Scope (owner, 2026-10-05): same-Battle.net-account sync only. `docs/PLAN.md` is the reviewed design (two internal rounds plus
 Codex round 3); **this is security code: a mistake hands a stranger the player's lists**, so any
 change to ownership, the proof, the MAC, the stores or the wire goes back through the plan and an
 adversarial review first.
@@ -28,7 +29,8 @@ adversarial review first.
 - `C:\Projects\LibGlass` (one runtime file, instances, upgrade tests) and
   `C:\Projects\LibGroupBuffs` (consumers, version fixtures): the templates.
 - `C:\Projects\References\PORTING-TBC-TO-FOREVER.md` and
-  `C:\Projects\References\forever-api-1.60.1.70205.md`: client facts and the API dump.
+  `C:\Projects\References\forever-api-1.60.1.70235.md`: client facts and the API dump (70235: the
+  documented surface is identical to 70205's).
 
 ## Layout
 

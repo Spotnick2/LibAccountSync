@@ -27,7 +27,7 @@
 -- - lib.ready = MINOR is the last line: a copy that threw partway leaves every
 --   entry point inert.
 
-local MAJOR, MINOR = "LibAccountSync-1.0", 3
+local MAJOR, MINOR = "LibAccountSync-1.0", 4
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end   -- an equal or newer copy is already loaded
 
@@ -75,7 +75,7 @@ local REASONS = { disabled = true, ["no-peers"] = true, ["too-large"] = true,
 lib.REASONS = lib.REASONS or {}
 for k in pairs(REASONS) do lib.REASONS[k] = true end
 
-local FUNCTIONS = { "Send", "OnMessage", "Peers", "Rescan", "SetEnabled", "IsEnabled", "Diagnostics" }
+local FUNCTIONS = { "Send", "SendTo", "OnMessage", "Peers", "Rescan", "SetEnabled", "IsEnabled", "Diagnostics" }
 
 --------------------------------------------------------------------------------
 -- State (§4): filled only where missing, so an upgrade keeps what is live.
@@ -1137,7 +1137,8 @@ function I.Result(inst, onResult, p, status, reason)
     if not ok then I.Report("LibAccountSync: onResult error: " .. tostring(err), "error", inst) end
 end
 
-function I.Send(inst, payload, onResult)
+-- target: nil for every peer, or a GUID for SendTo (§1).
+function I.SendFrames(inst, payload, onResult, target)
     if not I.IsEnabled(inst) or not I.Active() or not S.loggedIn then return nil, "disabled" end
     if type(payload) ~= "string" then error("LibAccountSync: Send(payload): payload must be a string", 2) end
     if #payload > inst.maxPayload then return nil, "too-large" end
@@ -1148,21 +1149,30 @@ function I.Send(inst, payload, onResult)
     local guid = PlayerGuid()
     if not K or not me or me.project == nil or me.region == nil or not IsGuid(guid) then return nil, "not-ready" end
     local dests, waiting = {}, 0
-    -- A snapshot: onResult below is host code, and may rescan.
+    -- A snapshot: onResult below is host code, and may rescan. A target is
+    -- only ever the ids bound to its GUID (Route keeps the GUID or drops the
+    -- id), never a broadcast.
     local ids = {}
-    for id in pairs(S.peers) do ids[#ids + 1] = id end
+    for id, p in pairs(S.peers) do
+        if target == nil or p.guid == target then ids[#ids + 1] = id end
+    end
+    -- One GUID can be bound to two ids (#4): a target gets one destination,
+    -- the first id holding a nonce, and one result.
+    local unready
     for _, id in ipairs(ids) do
         local p = I.Route(id)
         if p then
             if S.theirNonce[id] then
                 dests[#dests + 1] = { peer = p, nonce = S.theirNonce[id] }
+                if target then break end
             else
                 waiting = waiting + 1
-                I.Result(inst, onResult, p, "failed", "not-ready")
+                if target then unready = unready or p else I.Result(inst, onResult, p, "failed", "not-ready") end
                 I.SendHello(id, "soon")
             end
         end
     end
+    if unready and #dests == 0 then I.Result(inst, onResult, unready, "failed", "not-ready") end
     if #dests == 0 and waiting == 0 then return nil, "no-peers" end
     if #dests == 0 then return 0 end
 
@@ -1195,6 +1205,17 @@ function I.Send(inst, payload, onResult)
         end
     end
     return #dests
+end
+
+-- Send never takes a target: an extra argument from a host is ignored, as
+-- every older copy ignores it.
+function I.Send(inst, payload, onResult)
+    return I.SendFrames(inst, payload, onResult, nil)
+end
+
+function I.SendTo(inst, guid, payload, onResult)
+    if not IsGuid(guid) then error("LibAccountSync: SendTo(guid, payload): guid must be a player GUID", 2) end
+    return I.SendFrames(inst, payload, onResult, guid)
 end
 
 local RESULT_OFFLINE, RESULT_TARGET_REQUIRED = 12, 6

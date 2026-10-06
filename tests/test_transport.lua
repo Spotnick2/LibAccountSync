@@ -28,6 +28,8 @@ local function proven()
     return lib, inst, store, B
 end
 
+local function errs(f, ...) local ok = pcall(f, ...) return not ok end
+
 local function results(list)
     return function(sender, status, reason)
         list[#list + 1] = { name = sender.name, status = status, reason = reason }
@@ -476,6 +478,92 @@ do
     WoW.ctlDrain()
     eq(#got, 1, "a failed chunk is reported once")
     eq(got[1].status, "failed", "  as failed")
+end
+
+-- 19. SendTo: one peer by GUID; the others get nothing (#14).
+do
+    local lib, inst, store, B = verified()
+    local C = Peer.new({ id = 4, name = "Two", guid = "Player-1-00000004" })
+    inst.Rescan()
+    C:deliver(C:hello({ key = C.key }))
+    eq(#inst.Peers(), 2, "two peers")
+    WoW.sent = {}
+    local got = {}
+    eq(inst.SendTo(C.guid, "for Two only", results(got)), 1, "SendTo reaches one peer")
+    eq(#sentTo(3, "D1|"), 0, "  the other peer gets no frame")
+    local r = C:received("GlassChat", store)
+    eq(r[1] and r[1].payload, "for Two only", "  the target gets the payload")
+    check(r[1] and r[1].macOk, "  MAC'd over its own nonce")
+    eq(#got, 1, "  one result")
+    eq(got[1] and got[1].name, "Two", "  for the target")
+    eq(got[1] and got[1].status, "sent", "  as sent")
+    WoW.sent = {}
+    eq(inst.Send("x", nil, C.guid), 2, "Send ignores a third argument: still every peer")
+end
+
+-- 19b. A target that isn't a current peer: refused before sending, no
+--      result, never a broadcast; a target that isn't a GUID is an error.
+do
+    local lib, inst, store, B = verified()
+    WoW.sent = {}
+    local got = {}
+    local n, why = inst.SendTo("Player-1-000000FF", "x", results(got))
+    eq(n, nil, "a GUID that isn't a peer: nothing sent")
+    eq(why, "no-peers", "  no-peers")
+    eq(#sentTo(nil, "D1|"), 0, "  not a frame to anyone")
+    eq(#got, 0, "  and no onResult")
+    n, why = inst.SendTo(WoW.player.guid, "x")
+    eq(why, "no-peers", "our own GUID isn't a peer")
+    check(errs(inst.SendTo, "Karuzo", "x"), "SendTo with a name is an error")
+    check(errs(inst.SendTo, nil, "x"), "SendTo with no target is an error")
+    check(errs(inst.SendTo, B.guid, 42), "SendTo with a non-string payload is an error")
+    eq(select(2, inst.SendTo(B.guid, string.rep("x", 16385))), "too-large", "SendTo keeps Send's refusals")
+end
+
+-- 19c. A target whose nonce we don't hold: told once, helloed, no frames.
+do
+    local lib, inst, store, B = verified()
+    local C = Peer.new({ id = 4, name = "Two", guid = "Player-1-00000004" })
+    inst.Rescan()
+    WoW.advance(6)
+    WoW.sent = {}
+    local got = {}
+    eq(inst.SendTo(C.guid, "x", results(got)), 0, "no destination yet")
+    eq(#got, 1, "  one result")
+    eq(got[1] and got[1].reason, "not-ready", "  not-ready")
+    eq(got[1] and got[1].name, "Two", "  for the target")
+    eq(#sentTo(4, "H1|"), 1, "  and it gets a hello")
+    eq(#sentTo(nil, "D1|"), 0, "  and nobody gets a frame")
+end
+
+-- 19d. One GUID bound to two ids (#4): one destination, an id holding a
+--      nonce, and one result; with no nonce on either, one not-ready.
+do
+    local lib, inst, store, B = verified()
+    local B2 = Peer.new({ id = 6, name = B.name, guid = B.guid })
+    inst.Rescan()
+    WoW.advance(6)
+    WoW.sent = {}
+    local got = {}
+    eq(inst.SendTo(B.guid, "x", results(got)), 1, "two ids, one GUID: one destination")
+    eq(#sentTo(3, "D1|"), 1, "  the id holding a nonce")
+    eq(#sentTo(6, "D1|"), 0, "  and not the other")
+    eq(#got, 1, "  one result")
+    B2:deliver(B2:hello({ key = B2.key }))
+    WoW.sent, got = {}, {}
+    eq(inst.SendTo(B.guid, "x", results(got)), 1, "both ids holding a nonce: still one destination")
+    eq(#sentTo(3, "D1|") + #sentTo(6, "D1|"), 1, "  one stream")
+    eq(#got, 1, "  one result")
+end
+do
+    local lib, inst = session()
+    local B = Peer.new({})
+    Peer.new({ id = 6, name = B.name, guid = B.guid })
+    inst.Rescan()
+    WoW.advance(6)
+    local got = {}
+    eq(inst.SendTo(B.guid, "x", results(got)), 0, "two ids, no nonce: no destination")
+    eq(#got, 1, "  one not-ready result, not one per id")
 end
 
 done("test_transport")

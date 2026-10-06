@@ -98,7 +98,7 @@ local M = {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
           '    if second ~= nil and second ~= "" then' } } },
     { "MINOR not raised over the pilot copy", {
-        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 3', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 4', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
     -- (No "MINOR left at 2" mutation: that is what test_upgrade 4d's freeze
     -- guard catches in a normal run, since r2's manifest no longer matches,
     -- and that guard is off here because every mutant differs from r2.)
@@ -151,6 +151,15 @@ local M = {
                                           "local wait = buf.complete and AWAIT_HELLO or 100000" } } },
     { "send without their nonce", { { "            if S.theirNonce[id] then\n                dests",
                                       "            if true then\n                dests" } } },
+    -- SendTo (#14)
+    { "a target is a broadcast", { { "if target == nil or p.guid == target then ids", "if true then ids" } } },
+    { "a target gets every id bound to its GUID", { { "                if target then break end\n", "" } } },
+    { "a target's unready ids each reported", {
+        { "if target then unready = unready or p else I.Result", "if false then unready = unready or p else I.Result" } } },
+    { "Send forwards a target", { { "function I.Send(inst, payload, onResult)\n    return I.SendFrames(inst, payload, onResult, nil)",
+                                    "function I.Send(inst, payload, onResult, t)\n    return I.SendFrames(inst, payload, onResult, t)" } } },
+    { "SendTo takes any target", { { 'if not IsGuid(guid) then error("LibAccountSync: SendTo', 'if false then error("LibAccountSync: SendTo' } } },
+    { "no SendTo on an instance", { { '"Send", "SendTo", "OnMessage"', '"Send", "OnMessage"' } } },
     -- Stores (§3)
     { "a store's key is overwritten", {
         { "if S.key and (not ValidKey(t.key) or (t.key ~= S.key and union[t.key])) then", "if S.key then" } } },

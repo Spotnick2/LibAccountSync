@@ -23,7 +23,7 @@ do
     end
     local inst = lib:New({ addon = "GlassChat", store = store })
     check(errs(function() return lib:New({ addon = "GlassChat", store = store }) end), "a duplicate tag is an error")
-    for _, name in ipairs({ "Send", "OnMessage", "Peers", "Rescan", "SetEnabled", "IsEnabled", "Diagnostics" }) do
+    for _, name in ipairs({ "Send", "SendTo", "OnMessage", "Peers", "Rescan", "SetEnabled", "IsEnabled", "Diagnostics" }) do
         eq(type(inst[name]), "function", "the instance has " .. name)
     end
     eq(inst.maxPayload, 16384, "maxPayload defaults to 16384")

@@ -128,6 +128,7 @@ do
     check(okNew, "New does not throw on a half-loaded library")
     local _, lateWhy = late.Send("x")
     eq(lateWhy, "not-ready", "  it hands out an inert instance")
+    eq(select(2, inst.SendTo(B.guid, "x")), "not-ready", "an inert SendTo answers not-ready")
     eq(lib.byTag.Late, nil, "  which is not registered")
     eq(type(inst.Peers()), "table", "an inert Peers is still a table")
     local okIter = pcall(function() for _ in inst.Diagnostics() do end end)
@@ -262,6 +263,10 @@ for _, r in ipairs(RELEASED) do
     eq(box[1] and box[1].payload, "after loading over r" .. r, "  and receives")
     WoW.sent = {}
     eq(inst.Send("x"), 1, "  and sends")
+    if r < MINOR then
+        eq(type(inst.SendTo), "function", "  r" .. r .. "'s instance gains SendTo")
+        eq(inst.SendTo(B.guid, "y"), 1, "  which sends")
+    end
 end
 
 -- 5. The completion marker is the last line, and MINOR is written once.

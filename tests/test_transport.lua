@@ -28,8 +28,6 @@ local function proven()
     return lib, inst, store, B
 end
 
-local function errs(f, ...) local ok = pcall(f, ...) return not ok end
-
 local function results(list)
     return function(sender, status, reason)
         list[#list + 1] = { name = sender.name, status = status, reason = reason }
@@ -514,9 +512,12 @@ do
     eq(#got, 0, "  and no onResult")
     n, why = inst.SendTo(WoW.player.guid, "x")
     eq(why, "no-peers", "our own GUID isn't a peer")
-    check(errs(inst.SendTo, "Karuzo", "x"), "SendTo with a name is an error")
-    check(errs(inst.SendTo, nil, "x"), "SendTo with no target is an error")
-    check(errs(inst.SendTo, B.guid, 42), "SendTo with a non-string payload is an error")
+    local function says(e, text) return e ~= nil and e:find(text, 1, true) ~= nil end
+    check(says(errs(inst.SendTo, "Karuzo", "x"), "SendTo(guid, payload): guid must be"), "SendTo with a name is an error")
+    check(says(errs(inst.SendTo, nil, "x"), "guid must be a player GUID"), "SendTo with no target is an error")
+    check(says(errs(inst.SendTo, B.guid, 42), "SendTo(guid, payload): payload must be"),
+          "SendTo with a non-string payload is an error, naming SendTo")
+    check(says(errs(inst.Send, 42), "Send(payload): payload must be"), "  and Send's names Send")
     eq(select(2, inst.SendTo(B.guid, string.rep("x", 16385))), "too-large", "SendTo keeps Send's refusals")
 end
 
@@ -555,6 +556,21 @@ do
     eq(#sentTo(3, "D1|") + #sentTo(6, "D1|"), 1, "  one stream")
     eq(#got, 1, "  one result")
 end
+-- The id holding the nonce is not the first one seen: still one send, one result.
+do
+    local lib, inst = session()
+    local B = Peer.new({})
+    local B2 = Peer.new({ id = 6, name = B.name, guid = B.guid })
+    inst.Rescan()
+    B2:deliver(B2:hello({ key = B2.key }))
+    eq(lib.state.theirNonce[3], nil, "  (id 3, seen first, holds no nonce)")
+    WoW.sent = {}
+    local got = {}
+    eq(inst.SendTo(B.guid, "x", results(got)), 1, "the id with the nonce gets the send")
+    eq(#sentTo(6, "D1|"), 1, "  to id 6")
+    eq(#got, 1, "  one result")
+    eq(got[1] and got[1].status, "sent", "  sent, with no not-ready before it")
+end
 do
     local lib, inst = session()
     local B = Peer.new({})
@@ -562,8 +578,11 @@ do
     inst.Rescan()
     WoW.advance(6)
     local got = {}
+    local h3, h6 = #sentTo(3, "H1|"), #sentTo(6, "H1|")
     eq(inst.SendTo(B.guid, "x", results(got)), 0, "two ids, no nonce: no destination")
     eq(#got, 1, "  one not-ready result, not one per id")
+    eq(#sentTo(3, "H1|") - h3, 1, "  a hello to id 3")
+    eq(#sentTo(6, "H1|") - h6, 1, "  and to id 6")
 end
 
 done("test_transport")

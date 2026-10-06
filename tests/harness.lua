@@ -3,6 +3,9 @@
 
 local passed, failed = 0, 0
 
+-- The error message when f(...) throws, else nil.
+function errs(f, ...) local ok, e = pcall(f, ...) return not ok and tostring(e) or nil end
+
 function check(cond, msg)
     if cond then passed = passed + 1 else
         failed = failed + 1

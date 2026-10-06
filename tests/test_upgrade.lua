@@ -175,6 +175,9 @@ do
     eq(B:ourHello() and B:ourHello().name, "Malas Belgarden", "the pilot's instance sends our whole name")
     B:deliver(B:hello({ key = B.key, name = "Karuzo" }))
     eq(lib.state.theirNonce[3], B.nonce, "  and matches an older peer's first-name hello by GUID")
+    eq(type(inst.SendTo), "function", "the pilot's instance gains SendTo")
+    WoW.sent = {}
+    eq(inst.SendTo(B.guid, "y"), 1, "  which sends")
 end
 
 -- 4d. Released copies (EMBEDDED-LIBRARIES §8, §9.4).

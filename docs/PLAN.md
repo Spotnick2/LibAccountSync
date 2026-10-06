@@ -113,11 +113,20 @@ sync).
   feature-detectable (`inst.SendTo ~= nil`; §4's migration adds it to instances made by an older
   copy), and on a copy without it the call fails instead of broadcasting. `Send` itself still
   ignores extra arguments: it never takes a target.
+  - **Detect it at call time, not at load.** An instance made by an older copy gains `SendTo`
+    only when a newer copy loads, which can be after the host's own main chunk. A host that
+    cached "no `SendTo`" at load would broadcast for the whole session.
 - **Never a broadcast.** Destinations are only the ids bound to that GUID right now (§5.1).
 - **One destination.** One GUID can be bound to two ids (a blank second presence, #4). `SendTo`
-  sends to the first that routes and holds our nonce, and reports once. Sending to both would be
+  sends to one id that routes and holds our nonce, and reports once. Sending to both would be
   safe (the per-GUID sid floor refuses the duplicate, §5.2), but the host wants one result.
-- **Results and reasons are `Send`'s; the enum doesn't grow.**
+  - **No fallback to the other id.** If the chosen id's send fails, the host gets
+    `failed`/`offline` and retries; the next scan has dropped the stale binding. Route was
+    checked within 2 s of the send, so this is rare, and a fallback would need state that
+    outlives the call.
+- **Results and reasons are `Send`'s; the enum doesn't grow.** The `guid` is checked before the
+  switch and session checks, so a wrong argument raises in every state the library is live in
+  (an inert instance checks nothing, in any copy).
   - A GUID that isn't a current peer: `nil, "no-peers"` before anything is sent, with no
     `onResult`. The library keeps no memory of departed GUIDs, so there's no `"offline"` here;
     `"offline"` stays the asynchronous send failure.
@@ -756,4 +765,8 @@ Asked for by AltStable (AltStable#198), settled on the issue with its session.
   no `ImportKeys` call. AltStable confirmed its `bnetTrusted` only gained keys from
   Battle.net-verified ids (AltStable `Core.lua` 3486-3489), and tests the "imported oldest key
   wins" case with its import.
-- Adversarial review: owner-launched, on the PR.
+- Review: `/code-review high` on PR #15 (owner-launched). Taken: target selection moved out of
+  the broadcast loop into `I.TargetIds`, which left a branch no test reached; detect `SendTo` at
+  call time; `SendTo`'s payload error names `SendTo`; the pilot copy's instance gains `SendTo`; one
+  shared, message-checking `errs`. Recorded, not changed: no fallback to a GUID's second id when
+  the first fails, and the `guid` checked before the switch (both in §1).

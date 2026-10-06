@@ -1140,7 +1140,9 @@ end
 -- target: nil for every peer, or a GUID for SendTo (§1).
 function I.SendFrames(inst, payload, onResult, target)
     if not I.IsEnabled(inst) or not I.Active() or not S.loggedIn then return nil, "disabled" end
-    if type(payload) ~= "string" then error("LibAccountSync: Send(payload): payload must be a string", 2) end
+    if type(payload) ~= "string" then
+        error("LibAccountSync: " .. (target and "SendTo(guid, payload)" or "Send(payload)") .. ": payload must be a string", 2)
+    end
     if #payload > inst.maxPayload then return nil, "too-large" end
     local ctl = CTL()
     if not ctl then return nil, "no-route" end
@@ -1149,30 +1151,23 @@ function I.SendFrames(inst, payload, onResult, target)
     local guid = PlayerGuid()
     if not K or not me or me.project == nil or me.region == nil or not IsGuid(guid) then return nil, "not-ready" end
     local dests, waiting = {}, 0
-    -- A snapshot: onResult below is host code, and may rescan. A target is
-    -- only ever the ids bound to its GUID (Route keeps the GUID or drops the
-    -- id), never a broadcast.
-    local ids = {}
-    for id, p in pairs(S.peers) do
-        if target == nil or p.guid == target then ids[#ids + 1] = id end
+    -- A snapshot: onResult below is host code, and may rescan.
+    local ids = target and I.TargetIds(target) or {}
+    if not target then
+        for id in pairs(S.peers) do ids[#ids + 1] = id end
     end
-    -- One GUID can be bound to two ids (#4): a target gets one destination,
-    -- the first id holding a nonce, and one result.
-    local unready
     for _, id in ipairs(ids) do
         local p = I.Route(id)
         if p then
             if S.theirNonce[id] then
                 dests[#dests + 1] = { peer = p, nonce = S.theirNonce[id] }
-                if target then break end
             else
                 waiting = waiting + 1
-                if target then unready = unready or p else I.Result(inst, onResult, p, "failed", "not-ready") end
+                I.Result(inst, onResult, p, "failed", "not-ready")
                 I.SendHello(id, "soon")
             end
         end
     end
-    if unready and #dests == 0 then I.Result(inst, onResult, unready, "failed", "not-ready") end
     if #dests == 0 and waiting == 0 then return nil, "no-peers" end
     if #dests == 0 then return 0 end
 
@@ -1207,6 +1202,26 @@ function I.SendFrames(inst, payload, onResult, target)
     return #dests
 end
 
+-- SendTo's destination (§1): at most one id, and only one bound to the GUID
+-- (Route keeps the GUID or drops the id), never a broadcast. One GUID can be
+-- bound to two ids (#4): any routed one holding our nonce; else the first,
+-- which the send reports not-ready, and a hello to the rest.
+function I.TargetIds(target)
+    local bound, routed, pick = {}, {}, nil
+    for id, p in pairs(S.peers) do
+        if p.guid == target then bound[#bound + 1] = id end
+    end
+    for _, id in ipairs(bound) do                 -- Route may drop a binding
+        if I.Route(id) then
+            routed[#routed + 1] = id
+            if not pick and S.theirNonce[id] then pick = id end
+        end
+    end
+    if pick then return { pick } end
+    for k = 2, #routed do I.SendHello(routed[k], "soon") end
+    return { routed[1] }
+end
+
 -- Send never takes a target: an extra argument from a host is ignored, as
 -- every older copy ignores it.
 function I.Send(inst, payload, onResult)
@@ -1214,6 +1229,8 @@ function I.Send(inst, payload, onResult)
 end
 
 function I.SendTo(inst, guid, payload, onResult)
+    -- Checked before the switch and session checks, unlike Send's payload:
+    -- a wrong argument fails loudly in every state the library is live in.
     if not IsGuid(guid) then error("LibAccountSync: SendTo(guid, payload): guid must be a player GUID", 2) end
     return I.SendFrames(inst, payload, onResult, guid)
 end

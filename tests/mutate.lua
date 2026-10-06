@@ -152,10 +152,12 @@ local M = {
     { "send without their nonce", { { "            if S.theirNonce[id] then\n                dests",
                                       "            if true then\n                dests" } } },
     -- SendTo (#14)
-    { "a target is a broadcast", { { "if target == nil or p.guid == target then ids", "if true then ids" } } },
-    { "a target gets every id bound to its GUID", { { "                if target then break end\n", "" } } },
-    { "a target's unready ids each reported", {
-        { "if target then unready = unready or p else I.Result", "if false then unready = unready or p else I.Result" } } },
+    { "a target is a broadcast", { { "if p.guid == target then bound", "if true then bound" } } },
+    { "a target gets every id bound to its GUID", { { "if pick then return { pick } end", "if pick then return routed end" } } },
+    { "a target's first id is picked without a nonce", { { "if not pick and S.theirNonce[id] then pick = id end",
+                                                           "if not pick then pick = id end" } } },
+    { "a target's other ids get no hello", { { '    for k = 2, #routed do I.SendHello(routed[k], "soon") end\n', "" } } },
+    { "a target without a nonce is no-peers", { { "    return { routed[1] }\n", "    return {}\n" } } },
     { "Send forwards a target", { { "function I.Send(inst, payload, onResult)\n    return I.SendFrames(inst, payload, onResult, nil)",
                                     "function I.Send(inst, payload, onResult, t)\n    return I.SendFrames(inst, payload, onResult, t)" } } },
     { "SendTo takes any target", { { 'if not IsGuid(guid) then error("LibAccountSync: SendTo', 'if false then error("LibAccountSync: SendTo' } } },

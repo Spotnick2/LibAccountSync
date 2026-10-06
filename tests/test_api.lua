@@ -4,7 +4,6 @@
 dofile("tests/wow_stubs.lua")
 dofile("tests/harness.lua")
 
-local function errs(f, ...) local ok, e = pcall(f, ...) return not ok and tostring(e) or nil end
 local store = function() return {} end
 
 -- 1. New's checks.

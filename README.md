@@ -6,8 +6,8 @@ with ownership proven before anything is sent or accepted.
 
 Embedded with LibStub; players don't install it separately.
 
-> **Status:** `r3` released, its two-account pairing and sync validated in game (`r2` by
-> GlassChat's pilot; `r1` was never tagged, #4). Measured in game (#1): delivery across rulesets,
+> **Status:** `r4` released, adding `SendTo` (one peer, #14). `r3`'s two-account pairing and sync
+> are validated in game (`r2` by GlassChat's pilot; `r1` was never tagged, #4). Measured in game (#1): delivery across rulesets,
 > all byte values, no secret fields. **Open:** the §7.9 relay check and two other measurements that
 > need a Battle.net friend (#9). GlassChat is the pilot consumer.
 
@@ -36,6 +36,11 @@ local count, why = Sync.Send(payload, function(sender, status, reason)
 end)
 -- why: "disabled", "no-peers", "too-large", "not-ready", "offline", "no-route"
 
+-- r4: one peer, by a GUID from Peers(). Never a broadcast; one result. Detect it
+-- when you call it (if Sync.SendTo then ...), not at load: an instance made by an
+-- older copy gains it when a newer copy loads.
+local n, why = Sync.SendTo(guid, payload, onResult)   -- 1, 0 (not ready), or nil, why
+
 Sync.Peers()  Sync.Rescan()  Sync.SetEnabled(on)  Sync.IsEnabled()
 for line in Sync.Diagnostics() do print(line) end
 ```
@@ -49,7 +54,7 @@ Within `LibAccountSync-1.0` this API only grows.
 externals:
   Libs/LibAccountSync-1.0:
     url: https://github.com/Spotnick2/LibAccountSync
-    tag: r3
+    tag: r4
 ignore:
   # CurseForge's packager doesn't apply an external's own ignore list:
   - Libs/LibAccountSync-1.0/tests

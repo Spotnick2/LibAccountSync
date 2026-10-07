@@ -4,10 +4,12 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
-**Status: `r3` released** (tag on `6c888c5`, MINOR 3: #7 client project/region on a blank first
-run, #8 `bit`-backed SHA-256), validated by the two-account probe check. `r2` (`fdd4a72`) was
-validated by GlassChat's pilot (#4). MINOR 1 was never tagged: its pilot copy, `cc92deb`, failed the
-first in-game check (#4). All three are frozen in `tests/fixtures/` (r2 and r3 with manifests).
+**Status: `r4` released** (tag on `830017a`, MINOR 4: #14 `SendTo`, one peer by GUID, for
+AltStable's migration; Codex-reviewed, not yet run in game). `r3` (`6c888c5`, #7 client
+project/region on a blank first run, #8 `bit`-backed SHA-256) was validated by the two-account probe
+check; `r2` (`fdd4a72`) by GlassChat's pilot (#4). MINOR 1 was never tagged: its pilot copy,
+`cc92deb`, failed the first in-game check (#4). All four are frozen in `tests/fixtures/` (r2-r4 with
+manifests).
 Seven of the ten `docs/PLAN.md` §7 measurements are done (#1). **Still owed (#9):** the §7.9 relay
 gate (needs a Battle.net friend as the test subject; a positive result brings the deferred relay
 protections into the next MINOR), §7.3 and §7.7. #8 measured: the `bit` path hashes 16 KB in 65 ms and 32 KB

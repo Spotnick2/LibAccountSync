@@ -181,7 +181,7 @@ do
 end
 
 -- 4d. Released copies (EMBEDDED-LIBRARIES §8, §9.4).
-local RELEASED = { 2, 3 }                   -- every tagged rN, oldest first
+local RELEASED = { 2, 3, 4 }                -- every tagged rN, oldest first
 
 -- (a) A released MINOR is frozen: if a manifest exists for the current MINOR,
 --     every file the release shipped must still hash the same. A behaviour

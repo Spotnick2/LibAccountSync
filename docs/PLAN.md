@@ -770,3 +770,6 @@ Asked for by AltStable (AltStable#198), settled on the issue with its session.
   call time; `SendTo`'s payload error names `SendTo`; the pilot copy's instance gains `SendTo`; one
   shared, message-checking `errs`. Recorded, not changed: no fallback to a GUID's second id when
   the first fails, and the `guid` checked before the switch (both in §1).
+- Codex (owner-launched) at `bc5fbf5`, the merged head: no actionable findings. It confirmed the
+  destination set only narrows, at most one destination, and wire, MAC, store and ownership
+  unchanged. Tagged `r4` on `830017a`.

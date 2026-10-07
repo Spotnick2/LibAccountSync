@@ -128,6 +128,7 @@ do
     check(okNew, "New does not throw on a half-loaded library")
     local _, lateWhy = late.Send("x")
     eq(lateWhy, "not-ready", "  it hands out an inert instance")
+    eq(select(2, inst.SendTo(B.guid, "x")), "not-ready", "an inert SendTo answers not-ready")
     eq(lib.byTag.Late, nil, "  which is not registered")
     eq(type(inst.Peers()), "table", "an inert Peers is still a table")
     local okIter = pcall(function() for _ in inst.Diagnostics() do end end)
@@ -174,6 +175,9 @@ do
     eq(B:ourHello() and B:ourHello().name, "Malas Belgarden", "the pilot's instance sends our whole name")
     B:deliver(B:hello({ key = B.key, name = "Karuzo" }))
     eq(lib.state.theirNonce[3], B.nonce, "  and matches an older peer's first-name hello by GUID")
+    eq(type(inst.SendTo), "function", "the pilot's instance gains SendTo")
+    WoW.sent = {}
+    eq(inst.SendTo(B.guid, "y"), 1, "  which sends")
 end
 
 -- 4d. Released copies (EMBEDDED-LIBRARIES §8, §9.4).
@@ -262,6 +266,10 @@ for _, r in ipairs(RELEASED) do
     eq(box[1] and box[1].payload, "after loading over r" .. r, "  and receives")
     WoW.sent = {}
     eq(inst.Send("x"), 1, "  and sends")
+    if r < MINOR then
+        eq(type(inst.SendTo), "function", "  r" .. r .. "'s instance gains SendTo")
+        eq(inst.SendTo(B.guid, "y"), 1, "  which sends")
+    end
 end
 
 -- 5. The completion marker is the last line, and MINOR is written once.

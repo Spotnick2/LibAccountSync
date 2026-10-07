@@ -46,9 +46,10 @@ adversarial review first.
 ## The contract (frozen within MAJOR; it only grows)
 
 - `LibStub("LibAccountSync-1.0"):New({ addon, store, report?, maxPayload? })`, colon-called;
-  instance functions dot-called: `Send(payload, onResult?)`, `OnMessage(fn)`, `Peers()`,
-  `Rescan()`, `SetEnabled(on)`, `IsEnabled()`, `Diagnostics()`. The reason strings
-  (`lib.REASONS`) are a frozen enum. `New` on a half-loaded library returns an inert instance.
+  instance functions dot-called: `Send(payload, onResult?)`,
+  `SendTo(guid, payload, onResult?)` (MINOR 4), `OnMessage(fn)`, `Peers()`, `Rescan()`,
+  `SetEnabled(on)`, `IsEnabled()`, `Diagnostics()`. The reason strings (`lib.REASONS`) are a
+  frozen enum. `New` on a half-loaded library returns an inert instance.
 - **Wire 1** (`H1`, `D1`, prefix `LibAcctSync`, the domain strings, the 32 KB ceiling, field
   shapes) is frozen independently of MINOR: a change is a new wire added alongside, never an edit.
   Hello parsers ignore extra trailing fields; a data body is everything after the sixth `|`;

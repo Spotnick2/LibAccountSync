@@ -6,7 +6,8 @@ with ownership proven before anything is sent or accepted.
 
 Embedded with LibStub; players don't install it separately.
 
-> **Status:** `r4` released, adding `SendTo` (one peer, #14). `r3`'s two-account pairing and sync
+> **Status:** `r5` released, adding messages mode (`messages = true`, #18) and independent snapshot
+> kinds per addon (#17); `r4` added `SendTo` (one peer, #14). `r3`'s two-account pairing and sync
 > are validated in game (`r2` by GlassChat's pilot; `r1` was never tagged, #4). Measured in game (#1): delivery across rulesets,
 > all byte values, no secret fields. **Open:** the §7.9 relay check and two other measurements that
 > need a Battle.net friend (#9). GlassChat is the pilot consumer.
@@ -70,7 +71,7 @@ Within `LibAccountSync-1.0` this API only grows.
 externals:
   Libs/LibAccountSync-1.0:
     url: https://github.com/Spotnick2/LibAccountSync
-    tag: r4
+    tag: r5
 ignore:
   # CurseForge's packager doesn't apply an external's own ignore list:
   - Libs/LibAccountSync-1.0/tests

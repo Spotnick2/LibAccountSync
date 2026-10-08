@@ -1,0 +1,6 @@
+# SHA-256 (LF-normalised) of every file r5 ships. tests/test_upgrade.lua 4d.
+520a5d7f357d6996a793eedc8e90dc3623fb8be34b97d40a7b3683baf78a5362  LibAccountSync-1.0.xml
+d1269528e966f7ce4af8a753d7e16a2170c3383cb32995eadefeb39145c9974b  LibStub/LibStub.lua
+3491b6c98cae1634a9f0494b436e86df1632309fb68181c25240b53c4d86dde8  ChatThrottleLib/ChatThrottleLib.lua
+bd7d0b85a8fe045a0753b34e1f8d6c97c95dd0c7255b115022c136925afb07f6  LibAccountSync.lua
+c8db9ddf02fc72418cdd6948aeb1d13e5a7edd874965d24533f66de3fc5f759c  LICENSE

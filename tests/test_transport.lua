@@ -604,6 +604,39 @@ do
     eq(sbox[1] and sbox[1].payload, "ping", "  the newer one stands")
 end
 
+-- 20a. Messages that complete while their sender is unproven are delivered
+--      in completion order, not sid or admission order, when its hello
+--      lands or Battle.net starts vouching for it (Codex on #19).
+local function waitingOrder(release)
+    local store = seasoned()
+    local lib, inst = session(store, { before = function() WoW.bn.blank = true end })
+    local msg = newHost(lib, "AltStable", {}, { messages = true })
+    local box = inbox(msg)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()                            -- our nonce has gone to B
+    -- Admitted in sid order 700..703, completed 702, 700, 703, 701.
+    local s = {}
+    for k = 0, 3 do s[k] = B:frames("AltStable", string.rep(tostring(k), 400), { sid = tostring(1760000000700 + k) }) end
+    for k = 0, 3 do B:deliver(s[k][1]) end
+    for _, k in ipairs({ 2, 0, 3, 1 }) do
+        for i = 2, #s[k] do B:deliver(s[k][i]) end
+        WoW.advance(1)
+    end
+    eq(#box, 0, release .. ": nothing while the sender is unproven")
+    if release == "hello" then
+        B:deliver(B:hello())
+    else
+        B:setBlank(false)
+        WoW.bn.blank = false
+        WoW.advance(10)
+    end
+    local order = {}
+    for _, m in ipairs(box) do order[#order + 1] = tostring(m.sid - 1760000000700) end
+    eq(table.concat(order, ","), "2,0,3,1", release .. ": delivered in completion order")
+end
+waitingOrder("hello")
+waitingOrder("Battle.net")
+
 -- 20b. Messages mode: each sid once per sender GUID, after the finished
 --      record expires and under another id; beyond the window, older sids
 --      are refused.

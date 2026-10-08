@@ -94,6 +94,7 @@ if S.upSince == nil then S.upSince = 0 end
 if S.settleTries == nil then S.settleTries = 0 end
 if S.entropy == nil then S.entropy = 0 end
 if S.lastSid == nil then S.lastSid = 0 end
+if S.completions == nil then S.completions = 0 end
 
 local function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 
@@ -1346,7 +1347,11 @@ function I.Settle(key, buf)
     if S.buffers[key] ~= buf then return end
     local now = time()
     if buf.complete then
-        if I.TryDeliver(key, buf) then return end          -- Battle.net may vouch for it now
+        -- Battle.net may vouch for it now: deliver the id's waiting streams
+        -- in completion order, not this timer's (one admitted earlier may
+        -- have completed later).
+        I.RecheckAwaiting(buf.id)
+        if S.buffers[key] ~= buf then return end
         if now >= buf.awaitUntil then S.buffers[key] = nil else I.ArmSettle(key, buf) end
         return
     end
@@ -1361,7 +1366,8 @@ function I.Complete(key, buf)
         S.buffers[key], S.refused[key] = nil, time()
         return
     end
-    buf.payload, buf.chunks, buf.complete = payload, {}, true
+    S.completions = S.completions + 1
+    buf.payload, buf.chunks, buf.complete, buf.seq = payload, {}, true, S.completions
     if not I.TryDeliver(key, buf) then
         buf.awaitUntil = time() + AWAIT_HELLO
         I.ArmSettle(key, buf)
@@ -1452,9 +1458,16 @@ function I.FirstDelivery(key, sid)
     return true
 end
 
+-- In completion order: messages are delivered in the order they completed
+-- (#18, Codex on #19), however long they waited for their sender's proof.
 function I.RecheckAwaiting(id)
+    local waiting = {}
     for key, buf in pairs(S.buffers) do
-        if buf.id == id and buf.complete then I.TryDeliver(key, buf) end
+        if buf.id == id and buf.complete then waiting[#waiting + 1] = { key = key, buf = buf } end
+    end
+    table.sort(waiting, function(a, b) return (a.buf.seq or 0) < (b.buf.seq or 0) end)
+    for _, w in ipairs(waiting) do
+        if S.buffers[w.key] == w.buf then I.TryDeliver(w.key, w.buf) end
     end
 end
 

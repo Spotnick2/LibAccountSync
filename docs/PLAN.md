@@ -86,7 +86,9 @@ Each tag's delivery has one of two meanings, chosen at `New`:
   newer one is dropped on purpose.
 - **Messages (`messages = true`).** Streams are independent (AltStable's request, reply and ping),
   so dropping an overtaken one loses data. Each authenticated stream is delivered **once**, in
-  completion order. The floor is replaced by a record per (tag, sender GUID) of the newest 256
+  completion order, including streams that complete before their sender is proven: a hello or
+  Battle.net releases them in the order they completed (a sequence recorded at completion), not
+  in sid, admission or timer order. The floor is replaced by a record per (tag, sender GUID) of the newest 256
   sids delivered; a sid in it, or at or below the newest one forgotten, is refused. `sid` still
   reaches the handler, so a host that wants order applies it itself.
   - **Stated limits.** A stream overtaken by more than 256 newer messages from the same sender is
@@ -839,3 +841,9 @@ AltStable's database reply overtaken by its own request or ping (#18, AltStable#
   claiming the mode. Recorded, not changed: a message completing with no handler is used up, as a
   snapshot is (stated in §1); a replayed sid is refused only after its MAC is checked, as for
   snapshots, since the GUID at admission may not be the one authenticated at completion.
+- Codex (owner-launched) at `cafd53a`, one P2, taken: streams waiting for their sender's proof
+  were released in table order when the hello landed, and a settle timer from admission could
+  release a later-completed stream first. Each complete stream now records a completion sequence,
+  and both paths release an id's waiting streams through `RecheckAwaiting`, sorted by it. Tested
+  with four messages completing in an order unlike their sids and admission, released by a hello
+  and by Battle.net.

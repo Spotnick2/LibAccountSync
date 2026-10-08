@@ -47,7 +47,7 @@ local M = {
         { '(not rec.unknown and type(rec.characterName) == "string" and rec.characterName ~= "")', 'false' } } },
     { "a trusted key can be chosen as ours", { { ' and not trusted[k] then', ' then' } } },
     { "a waiting stream is not rechecked on settle", {
-        { "        if I.TryDeliver(key, buf) then return end          -- Battle.net may vouch for it now\n", "" } } },
+        { "        I.RecheckAwaiting(buf.id)\n        if S.buffers[key] ~= buf then return end\n", "" } } },
     { "an inert Peers answers nil", { { 'if name == "Peers" then return {} end', '' } } },
     { "a failed MAC is refused, not waited on", { { "        if not sender then return false end",
         "        if not sender then S.buffers[key], S.refused[key] = nil, time(); return true end" } } },
@@ -148,6 +148,11 @@ local M = {
     { "messages: the window out of order", { { "while at > 1 and sids[at - 1] >= sid do", "while false do" } } },
     { "messages: the record keyed by id", { { "if not I.FirstDelivery(floorKey, buf.sid) then return true end",
                                               'if not I.FirstDelivery(buf.tag .. "|" .. buf.id, buf.sid) then return true end' } } },
+    { "waiting streams released in table order", {
+        { "    table.sort(waiting, function(a, b) return (a.buf.seq or 0) < (b.buf.seq or 0) end)\n", "" } } },
+    { "a settle timer delivers only its own stream", {
+        { "        I.RecheckAwaiting(buf.id)\n        if S.buffers[key] ~= buf then return end",
+          "        if I.TryDeliver(key, buf) then return end" } } },
     { "the cap evicts a message", { { "if perId >= cap and inst.messages ~= true then",
                                       "if perId >= cap then" } } },
     { "the cap counted across tags", { { "if b.id == id and b.tag == tag then perId = perId + 1 end",

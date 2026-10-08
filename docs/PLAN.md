@@ -88,7 +88,10 @@ Each tag's delivery has one of two meanings, chosen at `New`:
   so dropping an overtaken one loses data. Each authenticated stream is delivered **once**, in
   completion order, including streams that complete before their sender is proven: a hello or
   Battle.net releases them in the order they completed (a sequence recorded at completion), not
-  in sid, admission or timer order. The floor is replaced by a record per (tag, sender GUID) of the newest 256
+  in sid, admission or timer order. Every completion goes through that same ordered drain, so a
+  stream completing after its sender turns verified never overtakes one already waiting. A
+  waiting stream that still can't be delivered (its MAC fails) doesn't hold back the ones after
+  it. The floor is replaced by a record per (tag, sender GUID) of the newest 256
   sids delivered; a sid in it, or at or below the newest one forgotten, is refused. `sid` still
   reaches the handler, so a host that wants order applies it itself.
   - **Stated limits.** A stream overtaken by more than 256 newer messages from the same sender is
@@ -847,3 +850,7 @@ AltStable's database reply overtaken by its own request or ping (#18, AltStable#
   and both paths release an id's waiting streams through `RecheckAwaiting`, sorted by it. Tested
   with four messages completing in an order unlike their sids and admission, released by a hello
   and by Battle.net.
+- Codex follow-up at `303c362`, one P2, taken: a stream completing just after its sender turned
+  verified was delivered directly, ahead of one still waiting for its timer. `Complete` now goes
+  through the same ordered drain (`RecheckAwaiting`). Tested with the presence turning valid and
+  a new message arriving before any timer fires; mutation red.

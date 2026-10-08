@@ -636,6 +636,24 @@ local function waitingOrder(release)
 end
 waitingOrder("hello")
 waitingOrder("Battle.net")
+-- A message completing after its sender turns verified, before any timer
+-- fires: the one already waiting goes first.
+do
+    local store = seasoned()
+    local lib, inst = session(store, { before = function() WoW.bn.blank = true end })
+    local msg = newHost(lib, "AltStable", {}, { messages = true })
+    local box = inbox(msg)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()
+    B:send("AltStable", "A", { sid = "1760000000710" })
+    eq(#box, 0, "a message waits while its sender is unproven")
+    B:setBlank(false)
+    WoW.bn.blank = false
+    B:send("AltStable", "B", { sid = "1760000000711" })
+    local order = {}
+    for _, m in ipairs(box) do order[#order + 1] = m.payload end
+    eq(table.concat(order, ","), "A,B", "the waiting message is delivered before a newer one completing")
+end
 
 -- 20b. Messages mode: each sid once per sender GUID, after the finished
 --      record expires and under another id; beyond the window, older sids

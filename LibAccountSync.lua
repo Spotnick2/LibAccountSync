@@ -1368,10 +1368,11 @@ function I.Complete(key, buf)
     end
     S.completions = S.completions + 1
     buf.payload, buf.chunks, buf.complete, buf.seq = payload, {}, true, S.completions
-    if not I.TryDeliver(key, buf) then
-        buf.awaitUntil = time() + AWAIT_HELLO
-        I.ArmSettle(key, buf)
-    end
+    buf.awaitUntil = time() + AWAIT_HELLO
+    -- Through the ordered drain, so a stream that completed earlier and is
+    -- deliverable now (its sender verified meanwhile) goes first (Codex on #19).
+    I.RecheckAwaiting(buf.id)
+    if S.buffers[key] == buf then I.ArmSettle(key, buf) end
 end
 
 -- A sender verified by Battle.net (at admission or now) is believed as is.

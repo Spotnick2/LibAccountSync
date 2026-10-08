@@ -132,7 +132,10 @@ local M = {
     { "the MAC is not checked", { { "buf.tag, buf.sidText, buf.n, hash) == buf.mac then",
                                     "buf.tag, buf.sidText, buf.n, hash) ~= nil then" } } },
     { "a complete stream is not kept for its hello", {
-        { "buf.awaitUntil = time() + AWAIT_HELLO\n        I.ArmSettle(key, buf)", "S.buffers[key] = nil" } } },
+        { "    if S.buffers[key] == buf then I.ArmSettle(key, buf) end\n", "    S.buffers[key] = nil\n" } } },
+    { "a completed stream delivered ahead of waiting ones", {
+        { "    I.RecheckAwaiting(buf.id)\n    if S.buffers[key] == buf then I.ArmSettle(key, buf) end",
+          "    if not I.TryDeliver(key, buf) then I.ArmSettle(key, buf) end" } } },
     { "no recheck when a hello lands", { { "    I.SendHello(id, \"answer\")\n    I.RecheckAwaiting(id)",
                                            "    I.SendHello(id, \"answer\")" } } },
     -- Stream ids (§5.2)

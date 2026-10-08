@@ -55,7 +55,9 @@ Within `LibAccountSync-1.0` this API only grows.
 - **Messages (`messages = true`, r5):** sends are independent (a request, a reply, a ping). Each
   is delivered once, in the order it completes, even when a small one overtakes a large one;
   order by `sid` yourself if you need to. Check `Sync.messages == true` after `New`: an older copy
-  ignores the option and delivers snapshots.
+  ignores the option and delivers snapshots. Limits: up to 4 streams open at once per sender, and
+  a stream overtaken by more than 256 newer ones is refused. Register `OnMessage` right after
+  `New`.
 - **Two kinds of snapshot in one addon** (lists and settings): make one instance per kind, each
   with its own tag, on the same store getter, e.g. `addon = "GlassChatST"`. Each tag has its own
   ordering, and the instances share the key, peers and handshake; works on every release. The

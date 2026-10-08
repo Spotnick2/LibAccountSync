@@ -628,17 +628,22 @@ do
     local lib, inst, store, B = verified()
     local msg = newHost(lib, "AltStable", {}, { messages = true })
     local box = inbox(msg)
-    for k = 0, 64 do B:send("AltStable", "m" .. k, { sid = tostring(1760000000200 + k) }) end
-    eq(#box, 65, "65 messages delivered")
+    -- Out of order: odd sids first, then even, 257 in all.
+    for _, start in ipairs({ 1, 0 }) do
+        for k = start, 256, 2 do B:send("AltStable", "m" .. k, { sid = tostring(1760000001000 + k) }) end
+    end
+    eq(#box, 257, "257 messages delivered, out of order")
     WoW.advance(61)
-    B:send("AltStable", "again", { sid = "1760000000200" })
-    eq(#box, 65, "the oldest, forgotten past the window of 64, is refused")
-    B:send("AltStable", "below", { sid = "1760000000150" })
-    eq(#box, 65, "  and so is anything older")
-    B:send("AltStable", "again", { sid = "1760000000264" })
-    eq(#box, 65, "  a remembered sid is refused")
-    B:send("AltStable", "new", { sid = "1760000000265" })
-    eq(#box, 66, "  and a new one delivered")
+    B:send("AltStable", "again", { sid = "1760000001000" })
+    eq(#box, 257, "the oldest, forgotten past the window of 256, is refused")
+    B:send("AltStable", "below", { sid = "1760000000950" })
+    eq(#box, 257, "  and so is anything older")
+    B:send("AltStable", "again", { sid = "1760000001001" })
+    eq(#box, 257, "  the oldest remembered sid is refused")
+    B:send("AltStable", "again", { sid = "1760000001256" })
+    eq(#box, 257, "  and the newest")
+    B:send("AltStable", "new", { sid = "1760000001257" })
+    eq(#box, 258, "  and a new one delivered")
 end
 
 -- 20c. The per-sender stream cap never evicts a message, nor another tag's
@@ -647,14 +652,12 @@ do
     local lib, inst, store, B = verified()
     local msg = newHost(lib, "AltStable", {}, { messages = true })
     local box = inbox(msg)
-    local a = B:frames("AltStable", string.rep("a", 400), { sid = "1760000000300" })
-    local b = B:frames("AltStable", string.rep("b", 400), { sid = "1760000000301" })
-    local c = B:frames("AltStable", string.rep("c", 400), { sid = "1760000000302" })
-    B:deliver(a[1]); B:deliver(b[1]); B:deliver(c[1])
-    for i = 2, #a do B:deliver(a[i]) end
-    for i = 2, #b do B:deliver(b[i]) end
-    eq(#box, 2, "messages: two open streams at the cap both deliver")
-    eq(box[1] and box[1].sid, 1760000000300, "  the oldest is not evicted by a third")
+    local open = {}
+    for k = 0, 4 do open[k] = B:frames("AltStable", string.rep("a", 400), { sid = tostring(1760000000300 + k) }) end
+    for k = 0, 4 do B:deliver(open[k][1]) end
+    for k = 0, 4 do for i = 2, #open[k] do B:deliver(open[k][i]) end end
+    eq(#box, 4, "messages: four open streams per sender deliver, a fifth is refused")
+    eq(box[1] and box[1].sid, 1760000000300, "  the oldest is not evicted by it")
 end
 do
     local lib, inst, store, B = verified()
@@ -663,12 +666,30 @@ do
     local si = B:frames("GlassChat", string.rep("i", 400), { sid = "1760000000310" })
     local s1 = B:frames("GlassChatST", string.rep("s", 400), { sid = "1760000000311" })
     local s2 = B:frames("GlassChatST", string.rep("t", 400), { sid = "1760000000312" })
-    B:deliver(si[1]); B:deliver(s1[1]); B:deliver(s2[1])
+    local s3 = B:frames("GlassChatST", string.rep("u", 400), { sid = "1760000000313" })
+    B:deliver(si[1]); B:deliver(s1[1]); B:deliver(s2[1]); B:deliver(s3[1])
     for i = 2, #si do B:deliver(si[i]) end
-    for i = 2, #s2 do B:deliver(s2[i]) end
-    eq(#box, 1, "snapshots: a newer stream of another tag doesn't evict this tag's")
-    eq(#stbox, 1, "  it evicts its own tag's older one")
-    eq(stbox[1] and stbox[1].sid, 1760000000312, "  and delivers")
+    for i = 2, #s1 do B:deliver(s1[i]) end
+    for i = 2, #s3 do B:deliver(s3[i]) end
+    eq(#box, 1, "snapshots: a third stream of another tag doesn't evict this tag's")
+    eq(#stbox, 1, "  it evicts its own tag's oldest")
+    eq(stbox[1] and stbox[1].sid, 1760000000313, "  and delivers")
+end
+do
+    -- Two tags each at their cap: a third tag's stream still gets a slot.
+    local lib, inst, store, B = verified()
+    local st = newHost(lib, "GlassChatST", store)
+    local msg = newHost(lib, "AltStable", {}, { messages = true })
+    local box, stbox, mbox = inbox(inst), inbox(st), inbox(msg)
+    local open = { B:frames("GlassChat", string.rep("i", 400), { sid = "1760000000320" }),
+                   B:frames("GlassChat", string.rep("j", 400), { sid = "1760000000321" }),
+                   B:frames("GlassChatST", string.rep("s", 400), { sid = "1760000000322" }),
+                   B:frames("GlassChatST", string.rep("t", 400), { sid = "1760000000323" }) }
+    for _, f in ipairs(open) do B:deliver(f[1]) end
+    B:send("AltStable", "request", { sid = "1760000000324" })
+    eq(#mbox, 1, "a message is admitted while another tag's streams fill their cap")
+    for _, f in ipairs(open) do for i = 2, #f do B:deliver(f[i]) end end
+    eq(#box + #stbox, 4, "  and those all still deliver")
 end
 
 -- 21. Two snapshot kinds from one addon (#17): a second instance with its own

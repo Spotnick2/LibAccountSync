@@ -85,7 +85,7 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
   `test_secrets` greps that nothing else touches a raw record.
 - A sender is always Blizzard's `senderID`; a stream from a non-verified sender needs the MAC
   (bound to our nonce and the proven GUID); sids are monotonic per (tag, sender GUID) for a
-  snapshot tag, and delivered at most once per (tag, sender GUID) for a messages tag (a 64-sid
+  snapshot tag, and delivered at most once per (tag, sender GUID) for a messages tag (a 256-sid
   window, older refused).
 
 ## Testing

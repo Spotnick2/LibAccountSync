@@ -65,8 +65,9 @@ local FRIENDS_SETTLE = 60              -- seconds after Battle.net comes up
 local SETTLING_EVERY, SETTLING_TRIES = 10, 30
 local STREAM_SETTLE = 6                -- seconds with no chunk drops a stream
 local AWAIT_HELLO = 10                 -- a complete stream waits this long for its hello
-local STREAMS_PER_ID, STREAMS_TOTAL = 2, 8
-local MESSAGE_WINDOW = 64              -- sids remembered per (tag, sender GUID), messages mode
+local STREAMS_PER_ID, STREAMS_TOTAL = 2, 8     -- open streams per (sender id, tag), and in all
+local STREAMS_PER_ID_MESSAGES = 4      -- per (sender id, tag) for a messages tag (#18)
+local MESSAGE_WINDOW = 256             -- sids remembered per (tag, sender GUID), messages mode
 local BUFFER_BYTES = 131072
 local ROUTE_CACHE = 2
 local TRUST_CAP = 16
@@ -1286,16 +1287,19 @@ function I.OnData(id, text)
         -- Not admitted: dropped, not remembered, so a stranger's flood can't
         -- grow the refused table.
         if not p and not S.myNonce[id] then return end
+        -- The cap is per (sender id, tag), so one tag's streams never crowd
+        -- out another's (#17); the total and the byte cap bound memory.
+        local cap = inst.messages == true and STREAMS_PER_ID_MESSAGES or STREAMS_PER_ID
         local perId, total, bytes = 0, 0, 0
         for _, b in pairs(S.buffers) do
             total = total + 1
             bytes = bytes + b.bytes
-            if b.id == id then perId = perId + 1 end
+            if b.id == id and b.tag == tag then perId = perId + 1 end
         end
-        if perId >= STREAMS_PER_ID and inst.messages ~= true then
+        if perId >= cap and inst.messages ~= true then
             -- A newer snapshot supersedes the sender's oldest of the SAME tag,
-            -- whose floor would drop it anyway. Another tag's stream, or a
-            -- message, is not made obsolete by it (#17, #18).
+            -- whose floor would drop it anyway. A message is not made
+            -- obsolete by a newer one (#18): at the cap it is refused.
             local oldKey, oldSid
             for k, b in pairs(S.buffers) do
                 if b.id == id and b.tag == tag and (not oldSid or b.sid < oldSid) then oldKey, oldSid = k, b.sid end
@@ -1305,7 +1309,7 @@ function I.OnData(id, text)
                 total, perId = total - 1, perId - 1
             end
         end
-        if perId >= STREAMS_PER_ID or total >= STREAMS_TOTAL then S.refused[key] = time(); return end
+        if perId >= cap or total >= STREAMS_TOTAL then S.refused[key] = time(); return end
         buf = { id = id, tag = tag, sid = tonumber(sid), sidText = sid, n = n, chunks = {}, have = 0,
                 bytes = 0, last = time(), verified = p and p.proven == "bnet", peer = p,
                 -- The character this id was last bound to this session, even
@@ -1433,16 +1437,18 @@ end
 function I.FirstDelivery(key, sid)
     local rec = S.seen[key]
     if not rec then
-        rec = { below = 0, sids = {}, count = 0 }
+        rec = { below = 0, sids = {} }     -- sids ascending: usually appended
         S.seen[key] = rec
     end
-    if sid <= rec.below or rec.sids[sid] then return false end
-    rec.sids[sid], rec.count = true, rec.count + 1
-    if rec.count > MESSAGE_WINDOW then
-        local low
-        for s in pairs(rec.sids) do if not low or s < low then low = s end end
-        rec.sids[low], rec.count, rec.below = nil, rec.count - 1, low
+    if sid <= rec.below then return false end
+    local sids = rec.sids
+    local at = #sids + 1
+    while at > 1 and sids[at - 1] >= sid do
+        if sids[at - 1] == sid then return false end
+        at = at - 1
     end
+    table.insert(sids, at, sid)
+    if #sids > MESSAGE_WINDOW then rec.below = table.remove(sids, 1) end
     return true
 end
 

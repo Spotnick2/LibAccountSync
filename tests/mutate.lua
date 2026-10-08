@@ -98,7 +98,7 @@ local M = {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
           '    if second ~= nil and second ~= "" then' } } },
     { "MINOR not raised over the pilot copy", {
-        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 4', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 5', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
     -- (No "MINOR left at 2" mutation: that is what test_upgrade 4d's freeze
     -- guard catches in a normal run, since r2's manifest no longer matches,
     -- and that guard is off here because every mutant differs from r2.)
@@ -139,6 +139,22 @@ local M = {
     { "the sid floor keyed by id", { { 'local floorKey = buf.tag .. "|" .. tostring(sender.guid)',
                                        'local floorKey = buf.tag .. "|" .. tostring(buf.id)' } } },
     { "no sid floor", { { "if S.floors[floorKey] and buf.sid <= S.floors[floorKey] then return true end", "" } } },
+    -- Messages mode (#18) and independent tags (#17)
+    { "messages mode ignored on receive", { { "if inst and inst.messages == true then", "if false then" } } },
+    { "every instance in messages mode", { { "if opts.messages then inst.messages = true end", "inst.messages = true" } } },
+    { "messages: a sid delivered twice", { { "if sid <= rec.below or rec.sids[sid] then return false end",
+                                             "if sid <= rec.below then return false end" } } },
+    { "messages: no floor below the window", { { "if sid <= rec.below or rec.sids[sid] then return false end",
+                                                 "if rec.sids[sid] then return false end" } } },
+    { "messages: the window never forgets", { { "if rec.count > MESSAGE_WINDOW then", "if false then" } } },
+    { "messages: the record keyed by id", { { "if not I.FirstDelivery(floorKey, buf.sid) then return true end",
+                                              'if not I.FirstDelivery(buf.tag .. "|" .. buf.id, buf.sid) then return true end' } } },
+    { "the cap evicts a message", { { "if perId >= STREAMS_PER_ID and inst.messages ~= true then",
+                                      "if perId >= STREAMS_PER_ID then" } } },
+    { "the cap evicts another tag's stream", { { "if b.id == id and b.tag == tag and (not oldSid",
+                                                 "if b.id == id and (not oldSid" } } },
+    { "messages not a boolean is accepted", { { 'if opts.messages ~= nil and type(opts.messages) ~= "boolean" then',
+                                                "if false then" } } },
     { "lastSid not read back from the store", {
         { 'if type(t.lastSid) == "number" and t.lastSid > lastSid and t.lastSid < 1e13 then lastSid = t.lastSid end', "" } } },
     -- Framing and caps (§2, §5.2)

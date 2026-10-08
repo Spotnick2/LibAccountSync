@@ -247,6 +247,8 @@ for _, r in ipairs(RELEASED) do
     for k, v in pairs(lib.impl) do impl[k] = v end
     local store = {}
     local inst = newHost(lib, "GlassChat", store)
+    -- A host asking for messages mode (#18) from a copy that predates it.
+    local asked = newHost(lib, "AltStable", {}, { messages = true })
     login()
     WoW.advance(61)
     loadLibrary("LibAccountSyncProbe")
@@ -269,6 +271,11 @@ for _, r in ipairs(RELEASED) do
     if r < MINOR then
         eq(type(inst.SendTo), "function", "  r" .. r .. "'s instance gains SendTo")
         eq(inst.SendTo(B.guid, "y"), 1, "  which sends")
+    end
+    if r < 5 then
+        -- Its copy ignored the option, so delivery stays snapshots, and the
+        -- instance must not claim otherwise once a newer copy runs it.
+        eq(asked.messages, nil, "  r" .. r .. "'s instance asked for messages mode doesn't claim it")
     end
 end
 

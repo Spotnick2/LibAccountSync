@@ -585,4 +585,113 @@ do
     eq(#sentTo(6, "H1|") - h6, 1, "  and to id 6")
 end
 
+-- 20. Messages mode (#18): a small stream that overtakes a large one's last
+--     chunk doesn't drop it. A snapshot host still drops the older one.
+do
+    local lib, inst, store, B = verified()
+    local msg = newHost(lib, "AltStable", {}, { messages = true })
+    local sbox, mbox = inbox(inst), inbox(msg)
+    for _, case in ipairs({ { "AltStable", mbox }, { "GlassChat", sbox } }) do
+        local big = B:frames(case[1], string.rep("d", 2000), { sid = "1760000000100" })
+        for i = 1, #big - 1 do B:deliver(big[i]) end
+        B:send(case[1], "ping", { sid = "1760000000101" })
+        B:deliver(big[#big])
+    end
+    eq(#mbox, 2, "messages: both streams are delivered")
+    eq(mbox[1] and mbox[1].payload, "ping", "  in completion order: the ping first")
+    eq(mbox[2] and mbox[2].sid, 1760000000100, "  then the large one, with its sid")
+    eq(#sbox, 1, "snapshots: the older one is still dropped")
+    eq(sbox[1] and sbox[1].payload, "ping", "  the newer one stands")
+end
+
+-- 20b. Messages mode: each sid once per sender GUID, after the finished
+--      record expires and under another id; beyond the window, older sids
+--      are refused.
+do
+    local lib, inst, store, B = proven()
+    local msg = newHost(lib, "AltStable", {}, { messages = true })
+    local box = inbox(msg)
+    B:send("AltStable", "once", { sid = "1760000000005" })
+    WoW.advance(61)                          -- the sweep forgets finished streams
+    eq(next(lib.state.finished), nil, "  (the finished record has expired)")
+    B:send("AltStable", "once", { sid = "1760000000005" })
+    eq(#box, 1, "a replayed sid is refused after the finished record expires")
+    local R = Peer.new({ id = 4, name = "Karuzo", guid = B.guid, blank = true })
+    inst.Rescan()
+    R:deliver(R:hello())
+    R:send("AltStable", "once", { sid = "1760000000005" })
+    eq(#box, 1, "  and under another id (per sender GUID)")
+    R:send("AltStable", "older", { sid = "1760000000004" })
+    eq(#box, 2, "an older, unseen sid is delivered (no floor)")
+end
+do
+    local lib, inst, store, B = verified()
+    local msg = newHost(lib, "AltStable", {}, { messages = true })
+    local box = inbox(msg)
+    for k = 0, 64 do B:send("AltStable", "m" .. k, { sid = tostring(1760000000200 + k) }) end
+    eq(#box, 65, "65 messages delivered")
+    WoW.advance(61)
+    B:send("AltStable", "again", { sid = "1760000000200" })
+    eq(#box, 65, "the oldest, forgotten past the window of 64, is refused")
+    B:send("AltStable", "below", { sid = "1760000000150" })
+    eq(#box, 65, "  and so is anything older")
+    B:send("AltStable", "again", { sid = "1760000000264" })
+    eq(#box, 65, "  a remembered sid is refused")
+    B:send("AltStable", "new", { sid = "1760000000265" })
+    eq(#box, 66, "  and a new one delivered")
+end
+
+-- 20c. The per-sender stream cap never evicts a message, nor another tag's
+--      stream: only an older snapshot of the same tag (#17, #18).
+do
+    local lib, inst, store, B = verified()
+    local msg = newHost(lib, "AltStable", {}, { messages = true })
+    local box = inbox(msg)
+    local a = B:frames("AltStable", string.rep("a", 400), { sid = "1760000000300" })
+    local b = B:frames("AltStable", string.rep("b", 400), { sid = "1760000000301" })
+    local c = B:frames("AltStable", string.rep("c", 400), { sid = "1760000000302" })
+    B:deliver(a[1]); B:deliver(b[1]); B:deliver(c[1])
+    for i = 2, #a do B:deliver(a[i]) end
+    for i = 2, #b do B:deliver(b[i]) end
+    eq(#box, 2, "messages: two open streams at the cap both deliver")
+    eq(box[1] and box[1].sid, 1760000000300, "  the oldest is not evicted by a third")
+end
+do
+    local lib, inst, store, B = verified()
+    local st = newHost(lib, "GlassChatST", store)
+    local box, stbox = inbox(inst), inbox(st)
+    local si = B:frames("GlassChat", string.rep("i", 400), { sid = "1760000000310" })
+    local s1 = B:frames("GlassChatST", string.rep("s", 400), { sid = "1760000000311" })
+    local s2 = B:frames("GlassChatST", string.rep("t", 400), { sid = "1760000000312" })
+    B:deliver(si[1]); B:deliver(s1[1]); B:deliver(s2[1])
+    for i = 2, #si do B:deliver(si[i]) end
+    for i = 2, #s2 do B:deliver(s2[i]) end
+    eq(#box, 1, "snapshots: a newer stream of another tag doesn't evict this tag's")
+    eq(#stbox, 1, "  it evicts its own tag's older one")
+    eq(stbox[1] and stbox[1].sid, 1760000000312, "  and delivers")
+end
+
+-- 21. Two snapshot kinds from one addon (#17): a second instance with its own
+--     tag on the SAME store has its own floor, and shares the key, the trust,
+--     the stream ids and the peers.
+do
+    local lib, inst, store, B = verified()
+    local st = newHost(lib, "GlassChatST", store)
+    local box, stbox = inbox(inst), inbox(st)
+    local lists = B:frames("GlassChat", string.rep("l", 3000), { sid = "1760000000400" })
+    for i = 1, #lists - 1 do B:deliver(lists[i]) end
+    B:send("GlassChatST", "settings", { sid = "1760000000401" })
+    B:deliver(lists[#lists])
+    eq(#stbox, 1, "the settings snapshot is delivered")
+    eq(#box, 1, "and the lists, completed after it, are not dropped")
+    eq(#st.Peers(), 1, "one peer, seen by both instances")
+    WoW.sent = {}
+    eq(inst.Send("lists"), 1, "both instances send")
+    eq(st.Send("settings"), 1, "  the second as well")
+    local a, b = B:received("GlassChat", store), B:received("GlassChatST", store)
+    check(a[1] and b[1] and a[1].macOk and b[1].macOk, "  under the one household key")
+    check(a[1] and b[1] and tonumber(b[1].sid) > tonumber(a[1].sid), "  with one sid counter")
+    eq(store.lastSid, tonumber(b[1] and b[1].sid), "  kept in the one store")
+end
+
 done("test_transport")

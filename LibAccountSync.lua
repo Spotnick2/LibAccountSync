@@ -11,6 +11,7 @@
 --       store = function() return GlassChatDB and GlassChatDB.accountSync end,
 --       report = function(text, kind) end,                    -- optional
 --       maxPayload = 16384,                                    -- optional
+--       messages = true,          -- optional (r5): independent messages, not snapshots
 --   })
 --   Sync.OnMessage(function(payload, sender, sid) end)
 --   Sync.Send(payload, function(sender, status, reason) end)
@@ -27,7 +28,7 @@
 -- - lib.ready = MINOR is the last line: a copy that threw partway leaves every
 --   entry point inert.
 
-local MAJOR, MINOR = "LibAccountSync-1.0", 4
+local MAJOR, MINOR = "LibAccountSync-1.0", 5
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end   -- an equal or newer copy is already loaded
 
@@ -65,6 +66,7 @@ local SETTLING_EVERY, SETTLING_TRIES = 10, 30
 local STREAM_SETTLE = 6                -- seconds with no chunk drops a stream
 local AWAIT_HELLO = 10                 -- a complete stream waits this long for its hello
 local STREAMS_PER_ID, STREAMS_TOTAL = 2, 8
+local MESSAGE_WINDOW = 64              -- sids remembered per (tag, sender GUID), messages mode
 local BUFFER_BYTES = 131072
 local ROUTE_CACHE = 2
 local TRUST_CAP = 16
@@ -83,7 +85,7 @@ local FUNCTIONS = { "Send", "SendTo", "OnMessage", "Peers", "Rescan", "SetEnable
 
 local STATE_TABLES = { "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
                        "finished", "refused", "floors", "routeChecked", "reported", "proofChecks", "pendingKeys",
-                       "lastGuid" }
+                       "lastGuid", "seen" }
 for _, k in ipairs(STATE_TABLES) do
     if S[k] == nil then S[k] = {} end
 end
@@ -1290,12 +1292,13 @@ function I.OnData(id, text)
             bytes = bytes + b.bytes
             if b.id == id then perId = perId + 1 end
         end
-        if perId >= STREAMS_PER_ID then
-            -- Snapshots are wholesale and sids monotonic: a newer stream
-            -- supersedes the sender's oldest, never the other way round.
+        if perId >= STREAMS_PER_ID and inst.messages ~= true then
+            -- A newer snapshot supersedes the sender's oldest of the SAME tag,
+            -- whose floor would drop it anyway. Another tag's stream, or a
+            -- message, is not made obsolete by it (#17, #18).
             local oldKey, oldSid
             for k, b in pairs(S.buffers) do
-                if b.id == id and (not oldSid or b.sid < oldSid) then oldKey, oldSid = k, b.sid end
+                if b.id == id and b.tag == tag and (not oldSid or b.sid < oldSid) then oldKey, oldSid = k, b.sid end
             end
             if oldSid and oldSid < tonumber(sid) then
                 S.buffers[oldKey] = nil
@@ -1405,15 +1408,40 @@ function I.TryDeliver(key, buf)
     end
     S.buffers[key] = nil
     S.finished[key] = time()
-    -- Monotonic per (tag, sender GUID): an older snapshot never lands after a
-    -- newer one, reordered or replayed under another id (§5.2).
-    local floorKey = buf.tag .. "|" .. tostring(sender.guid)
-    if S.floors[floorKey] and buf.sid <= S.floors[floorKey] then return true end
-    S.floors[floorKey] = buf.sid
     local inst = lib.byTag[buf.tag]
+    local floorKey = buf.tag .. "|" .. tostring(sender.guid)
+    if inst and inst.messages == true then
+        -- Messages (#18): each sid once per (tag, sender GUID), in any order.
+        if not I.FirstDelivery(floorKey, buf.sid) then return true end
+    else
+        -- Snapshots: monotonic per (tag, sender GUID), so an older snapshot
+        -- never lands after a newer one, reordered or replayed under another
+        -- id (§5.2).
+        if S.floors[floorKey] and buf.sid <= S.floors[floorKey] then return true end
+        S.floors[floorKey] = buf.sid
+    end
     if inst and type(inst.handler) == "function" and I.IsEnabled(inst) then
         local ok, err = pcall(inst.handler, buf.payload, SenderCopy(sender), buf.sid)
         if not ok then I.Report("LibAccountSync: message handler error: " .. tostring(err), "error", inst) end
+    end
+    return true
+end
+
+-- The newest MESSAGE_WINDOW sids delivered are remembered; a sid at or below
+-- the newest one forgotten is refused, as the snapshot floor would refuse it,
+-- so no sid is delivered twice in a session (§5.2, #18).
+function I.FirstDelivery(key, sid)
+    local rec = S.seen[key]
+    if not rec then
+        rec = { below = 0, sids = {}, count = 0 }
+        S.seen[key] = rec
+    end
+    if sid <= rec.below or rec.sids[sid] then return false end
+    rec.sids[sid], rec.count = true, rec.count + 1
+    if rec.count > MESSAGE_WINDOW then
+        local low
+        for s in pairs(rec.sids) do if not low or s < low then low = s end end
+        rec.sids[low], rec.count, rec.below = nil, rec.count - 1, low
     end
     return true
 end
@@ -1546,8 +1574,8 @@ function I.Diagnostics(inst)
     local lines = {}
     local function add(s) lines[#lines + 1] = s end
     local me = I.Self()
-    add(("LibAccountSync-1.0 r%d, wire %d; this host %s, %s"):format(MINOR, WIRE, inst.addon,
-        I.IsEnabled(inst) and "enabled" or "disabled"))
+    add(("LibAccountSync-1.0 r%d, wire %d; this host %s, %s, %s"):format(MINOR, WIRE, inst.addon,
+        I.IsEnabled(inst) and "enabled" or "disabled", inst.messages == true and "messages" or "snapshots"))
     add("Battle.net: " .. (I.Active() and "usable" or "not usable (off, or not connected)"))
     if me then
         add(("us: %s, project %s, region %s"):format(me.tag or "?", tostring(me.project), tostring(me.region)))
@@ -1632,6 +1660,9 @@ function lib:New(opts)
     if type(maxPayload) ~= "number" or maxPayload < 1 or maxPayload > MAX_PAYLOAD or maxPayload % 1 ~= 0 then
         error("LibAccountSync-1.0: New: maxPayload must be a whole number from 1 to " .. MAX_PAYLOAD, 2)
     end
+    if opts.messages ~= nil and type(opts.messages) ~= "boolean" then
+        error("LibAccountSync-1.0: New: messages must be true or false", 2)
+    end
     if lib.byTag[opts.addon] then error("LibAccountSync-1.0: New: addon tag '" .. opts.addon .. "' is already registered", 2) end
     local inst = { addon = opts.addon, getStore = opts.store, report = opts.report, maxPayload = maxPayload }
     local ready = lib.ready ~= nil and lib.ready == select(2, LibStub:GetLibrary(MAJOR, true))
@@ -1648,6 +1679,9 @@ function lib:New(opts)
         end
         return inst
     end
+    -- Set only by a copy that honours it, and never changed after: a host
+    -- detects messages mode by inst.messages == true (#18).
+    if opts.messages then inst.messages = true end
     lib.byTag[opts.addon] = inst
     lib.instances[#lib.instances + 1] = inst
     I.Migrate(inst)

@@ -47,11 +47,13 @@ adversarial review first.
 
 ## The contract (frozen within MAJOR; it only grows)
 
-- `LibStub("LibAccountSync-1.0"):New({ addon, store, report?, maxPayload? })`, colon-called;
+- `LibStub("LibAccountSync-1.0"):New({ addon, store, report?, maxPayload?, messages? })`, colon-called;
   instance functions dot-called: `Send(payload, onResult?)`,
   `SendTo(guid, payload, onResult?)` (MINOR 4), `OnMessage(fn)`, `Peers()`, `Rescan()`,
   `SetEnabled(on)`, `IsEnabled()`, `Diagnostics()`. The reason strings (`lib.REASONS`) are a
-  frozen enum. `New` on a half-loaded library returns an inert instance.
+  frozen enum. `New` on a half-loaded library returns an inert instance. `messages = true`
+  (MINOR 5) is detected by `inst.messages == true`, set only by a copy that honours it and never
+  changed after `New`.
 - **Wire 1** (`H1`, `D1`, prefix `LibAcctSync`, the domain strings, the 32 KB ceiling, field
   shapes) is frozen independently of MINOR: a change is a new wire added alongside, never an edit.
   Hello parsers ignore extra trailing fields; a data body is everything after the sixth `|`;
@@ -82,7 +84,9 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
   `I.FriendGameIDs`, which copy plain fields and mark a record holding a secret `unknown`;
   `test_secrets` greps that nothing else touches a raw record.
 - A sender is always Blizzard's `senderID`; a stream from a non-verified sender needs the MAC
-  (bound to our nonce and the proven GUID); sids are monotonic per (tag, sender GUID).
+  (bound to our nonce and the proven GUID); sids are monotonic per (tag, sender GUID) for a
+  snapshot tag, and delivered at most once per (tag, sender GUID) for a messages tag (a 256-sid
+  window, older refused).
 
 ## Testing
 

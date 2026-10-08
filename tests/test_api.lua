@@ -29,6 +29,12 @@ do
     check(errs(inst.OnMessage, "nope"), "OnMessage with a non-function is an error")
     check(not errs(inst.OnMessage, nil), "OnMessage(nil) clears the handler")
     eq(lib:New({ addon = "Big", store = store, maxPayload = 32768 }).maxPayload, 32768, "the wire ceiling is allowed")
+    -- Messages mode (#18): inst.messages is true only where it is honoured.
+    eq(inst.messages, nil, "snapshots by default: no messages field")
+    eq(lib:New({ addon = "Off", store = store, messages = false }).messages, nil, "messages = false: snapshots")
+    eq(lib:New({ addon = "On", store = store, messages = true }).messages, true, "messages = true: inst.messages")
+    check(errs(function() return lib:New({ addon = "Bad", store = store, messages = "yes" }) end),
+          "messages that isn't a boolean is an error")
 end
 
 -- 2. A host loaded after login (load-on-demand) still starts.

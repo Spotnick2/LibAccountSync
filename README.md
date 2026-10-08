@@ -22,13 +22,14 @@ local Sync = LibStub("LibAccountSync-1.0"):New({
     report = function(text, kind) end,   -- optional
     maxPayload = 16384,                  -- optional, at most 32768 (hashing a full 32 KB send
                                          -- costs about 130 ms in game; 16 KB about 65 ms, #8)
+    messages = true,                     -- optional (r5): see "Snapshots or messages" below
 })
 
 Sync.OnMessage(function(payload, sender, sid)
     -- payload: the string sent (data only: never run it)
     -- sender: { guid, name, realm, faction, proven = "bnet" | "key" | "proof" },
     --         from Blizzard's sender id, never from the message
-    -- sid: grows per sender, to order snapshots
+    -- sid: grows per sender, to order snapshots (or messages)
 end)
 
 local count, why = Sync.Send(payload, function(sender, status, reason)
@@ -46,6 +47,21 @@ for line in Sync.Diagnostics() do print(line) end
 ```
 
 Within `LibAccountSync-1.0` this API only grows.
+
+## Snapshots or messages
+
+- **Snapshots (the default):** each send replaces the last. A stream completing after a newer one
+  from the same sender and tag is dropped, so an old snapshot never lands over a new one.
+- **Messages (`messages = true`, r5):** sends are independent (a request, a reply, a ping). Each
+  is delivered once, in the order it completes, even when a small one overtakes a large one;
+  order by `sid` yourself if you need to. Check `Sync.messages == true` after `New`: an older copy
+  ignores the option and delivers snapshots. Limits: up to 4 streams open at once per sender, and
+  a stream overtaken by more than 256 newer ones is refused. Register `OnMessage` right after
+  `New`.
+- **Two kinds of snapshot in one addon** (lists and settings): make one instance per kind, each
+  with its own tag, on the same store getter, e.g. `addon = "GlassChatST"`. Each tag has its own
+  ordering, and the instances share the key, peers and handshake; works on every release. The
+  on/off switch lives in the store, so flip both together.
 
 ## Embedding
 

@@ -11,6 +11,7 @@
 --       store = function() return GlassChatDB and GlassChatDB.accountSync end,
 --       report = function(text, kind) end,                    -- optional
 --       maxPayload = 16384,                                    -- optional
+--       messages = true,          -- optional (r5): independent messages, not snapshots
 --   })
 --   Sync.OnMessage(function(payload, sender, sid) end)
 --   Sync.Send(payload, function(sender, status, reason) end)
@@ -27,7 +28,7 @@
 -- - lib.ready = MINOR is the last line: a copy that threw partway leaves every
 --   entry point inert.
 
-local MAJOR, MINOR = "LibAccountSync-1.0", 4
+local MAJOR, MINOR = "LibAccountSync-1.0", 5
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end   -- an equal or newer copy is already loaded
 
@@ -64,7 +65,9 @@ local FRIENDS_SETTLE = 60              -- seconds after Battle.net comes up
 local SETTLING_EVERY, SETTLING_TRIES = 10, 30
 local STREAM_SETTLE = 6                -- seconds with no chunk drops a stream
 local AWAIT_HELLO = 10                 -- a complete stream waits this long for its hello
-local STREAMS_PER_ID, STREAMS_TOTAL = 2, 8
+local STREAMS_PER_ID, STREAMS_TOTAL = 2, 8     -- open streams per (sender id, tag), and in all
+local STREAMS_PER_ID_MESSAGES = 4      -- per (sender id, tag) for a messages tag (#18)
+local MESSAGE_WINDOW = 256             -- sids remembered per (tag, sender GUID), messages mode
 local BUFFER_BYTES = 131072
 local ROUTE_CACHE = 2
 local TRUST_CAP = 16
@@ -83,7 +86,7 @@ local FUNCTIONS = { "Send", "SendTo", "OnMessage", "Peers", "Rescan", "SetEnable
 
 local STATE_TABLES = { "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
                        "finished", "refused", "floors", "routeChecked", "reported", "proofChecks", "pendingKeys",
-                       "lastGuid" }
+                       "lastGuid", "seen" }
 for _, k in ipairs(STATE_TABLES) do
     if S[k] == nil then S[k] = {} end
 end
@@ -91,6 +94,7 @@ if S.upSince == nil then S.upSince = 0 end
 if S.settleTries == nil then S.settleTries = 0 end
 if S.entropy == nil then S.entropy = 0 end
 if S.lastSid == nil then S.lastSid = 0 end
+if S.completions == nil then S.completions = 0 end
 
 local function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 
@@ -1284,25 +1288,29 @@ function I.OnData(id, text)
         -- Not admitted: dropped, not remembered, so a stranger's flood can't
         -- grow the refused table.
         if not p and not S.myNonce[id] then return end
+        -- The cap is per (sender id, tag), so one tag's streams never crowd
+        -- out another's (#17); the total and the byte cap bound memory.
+        local cap = inst.messages == true and STREAMS_PER_ID_MESSAGES or STREAMS_PER_ID
         local perId, total, bytes = 0, 0, 0
         for _, b in pairs(S.buffers) do
             total = total + 1
             bytes = bytes + b.bytes
-            if b.id == id then perId = perId + 1 end
+            if b.id == id and b.tag == tag then perId = perId + 1 end
         end
-        if perId >= STREAMS_PER_ID then
-            -- Snapshots are wholesale and sids monotonic: a newer stream
-            -- supersedes the sender's oldest, never the other way round.
+        if perId >= cap and inst.messages ~= true then
+            -- A newer snapshot supersedes the sender's oldest of the SAME tag,
+            -- whose floor would drop it anyway. A message is not made
+            -- obsolete by a newer one (#18): at the cap it is refused.
             local oldKey, oldSid
             for k, b in pairs(S.buffers) do
-                if b.id == id and (not oldSid or b.sid < oldSid) then oldKey, oldSid = k, b.sid end
+                if b.id == id and b.tag == tag and (not oldSid or b.sid < oldSid) then oldKey, oldSid = k, b.sid end
             end
             if oldSid and oldSid < tonumber(sid) then
                 S.buffers[oldKey] = nil
                 total, perId = total - 1, perId - 1
             end
         end
-        if perId >= STREAMS_PER_ID or total >= STREAMS_TOTAL then S.refused[key] = time(); return end
+        if perId >= cap or total >= STREAMS_TOTAL then S.refused[key] = time(); return end
         buf = { id = id, tag = tag, sid = tonumber(sid), sidText = sid, n = n, chunks = {}, have = 0,
                 bytes = 0, last = time(), verified = p and p.proven == "bnet", peer = p,
                 -- The character this id was last bound to this session, even
@@ -1339,7 +1347,11 @@ function I.Settle(key, buf)
     if S.buffers[key] ~= buf then return end
     local now = time()
     if buf.complete then
-        if I.TryDeliver(key, buf) then return end          -- Battle.net may vouch for it now
+        -- Battle.net may vouch for it now: deliver the id's waiting streams
+        -- in completion order, not this timer's (one admitted earlier may
+        -- have completed later).
+        I.RecheckAwaiting(buf.id)
+        if S.buffers[key] ~= buf then return end
         if now >= buf.awaitUntil then S.buffers[key] = nil else I.ArmSettle(key, buf) end
         return
     end
@@ -1354,11 +1366,13 @@ function I.Complete(key, buf)
         S.buffers[key], S.refused[key] = nil, time()
         return
     end
-    buf.payload, buf.chunks, buf.complete = payload, {}, true
-    if not I.TryDeliver(key, buf) then
-        buf.awaitUntil = time() + AWAIT_HELLO
-        I.ArmSettle(key, buf)
-    end
+    S.completions = S.completions + 1
+    buf.payload, buf.chunks, buf.complete, buf.seq = payload, {}, true, S.completions
+    buf.awaitUntil = time() + AWAIT_HELLO
+    -- Through the ordered drain, so a stream that completed earlier and is
+    -- deliverable now (its sender verified meanwhile) goes first (Codex on #19).
+    I.RecheckAwaiting(buf.id)
+    if S.buffers[key] == buf then I.ArmSettle(key, buf) end
 end
 
 -- A sender verified by Battle.net (at admission or now) is believed as is.
@@ -1405,12 +1419,18 @@ function I.TryDeliver(key, buf)
     end
     S.buffers[key] = nil
     S.finished[key] = time()
-    -- Monotonic per (tag, sender GUID): an older snapshot never lands after a
-    -- newer one, reordered or replayed under another id (§5.2).
-    local floorKey = buf.tag .. "|" .. tostring(sender.guid)
-    if S.floors[floorKey] and buf.sid <= S.floors[floorKey] then return true end
-    S.floors[floorKey] = buf.sid
     local inst = lib.byTag[buf.tag]
+    local floorKey = buf.tag .. "|" .. tostring(sender.guid)
+    if inst and inst.messages == true then
+        -- Messages (#18): each sid once per (tag, sender GUID), in any order.
+        if not I.FirstDelivery(floorKey, buf.sid) then return true end
+    else
+        -- Snapshots: monotonic per (tag, sender GUID), so an older snapshot
+        -- never lands after a newer one, reordered or replayed under another
+        -- id (§5.2).
+        if S.floors[floorKey] and buf.sid <= S.floors[floorKey] then return true end
+        S.floors[floorKey] = buf.sid
+    end
     if inst and type(inst.handler) == "function" and I.IsEnabled(inst) then
         local ok, err = pcall(inst.handler, buf.payload, SenderCopy(sender), buf.sid)
         if not ok then I.Report("LibAccountSync: message handler error: " .. tostring(err), "error", inst) end
@@ -1418,9 +1438,37 @@ function I.TryDeliver(key, buf)
     return true
 end
 
+-- The newest MESSAGE_WINDOW sids delivered are remembered; a sid at or below
+-- the newest one forgotten is refused, as the snapshot floor would refuse it,
+-- so no sid is delivered twice in a session (§5.2, #18).
+function I.FirstDelivery(key, sid)
+    local rec = S.seen[key]
+    if not rec then
+        rec = { below = 0, sids = {} }     -- sids ascending: usually appended
+        S.seen[key] = rec
+    end
+    if sid <= rec.below then return false end
+    local sids = rec.sids
+    local at = #sids + 1
+    while at > 1 and sids[at - 1] >= sid do
+        if sids[at - 1] == sid then return false end
+        at = at - 1
+    end
+    table.insert(sids, at, sid)
+    if #sids > MESSAGE_WINDOW then rec.below = table.remove(sids, 1) end
+    return true
+end
+
+-- In completion order: messages are delivered in the order they completed
+-- (#18, Codex on #19), however long they waited for their sender's proof.
 function I.RecheckAwaiting(id)
+    local waiting = {}
     for key, buf in pairs(S.buffers) do
-        if buf.id == id and buf.complete then I.TryDeliver(key, buf) end
+        if buf.id == id and buf.complete then waiting[#waiting + 1] = { key = key, buf = buf } end
+    end
+    table.sort(waiting, function(a, b) return (a.buf.seq or 0) < (b.buf.seq or 0) end)
+    for _, w in ipairs(waiting) do
+        if S.buffers[w.key] == w.buf then I.TryDeliver(w.key, w.buf) end
     end
 end
 
@@ -1546,8 +1594,8 @@ function I.Diagnostics(inst)
     local lines = {}
     local function add(s) lines[#lines + 1] = s end
     local me = I.Self()
-    add(("LibAccountSync-1.0 r%d, wire %d; this host %s, %s"):format(MINOR, WIRE, inst.addon,
-        I.IsEnabled(inst) and "enabled" or "disabled"))
+    add(("LibAccountSync-1.0 r%d, wire %d; this host %s, %s, %s"):format(MINOR, WIRE, inst.addon,
+        I.IsEnabled(inst) and "enabled" or "disabled", inst.messages == true and "messages" or "snapshots"))
     add("Battle.net: " .. (I.Active() and "usable" or "not usable (off, or not connected)"))
     if me then
         add(("us: %s, project %s, region %s"):format(me.tag or "?", tostring(me.project), tostring(me.region)))
@@ -1632,6 +1680,9 @@ function lib:New(opts)
     if type(maxPayload) ~= "number" or maxPayload < 1 or maxPayload > MAX_PAYLOAD or maxPayload % 1 ~= 0 then
         error("LibAccountSync-1.0: New: maxPayload must be a whole number from 1 to " .. MAX_PAYLOAD, 2)
     end
+    if opts.messages ~= nil and type(opts.messages) ~= "boolean" then
+        error("LibAccountSync-1.0: New: messages must be true or false", 2)
+    end
     if lib.byTag[opts.addon] then error("LibAccountSync-1.0: New: addon tag '" .. opts.addon .. "' is already registered", 2) end
     local inst = { addon = opts.addon, getStore = opts.store, report = opts.report, maxPayload = maxPayload }
     local ready = lib.ready ~= nil and lib.ready == select(2, LibStub:GetLibrary(MAJOR, true))
@@ -1648,6 +1699,9 @@ function lib:New(opts)
         end
         return inst
     end
+    -- Set only by a copy that honours it, and never changed after: a host
+    -- detects messages mode by inst.messages == true (#18).
+    if opts.messages then inst.messages = true end
     lib.byTag[opts.addon] = inst
     lib.instances[#lib.instances + 1] = inst
     I.Migrate(inst)

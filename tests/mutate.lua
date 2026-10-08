@@ -47,7 +47,7 @@ local M = {
         { '(not rec.unknown and type(rec.characterName) == "string" and rec.characterName ~= "")', 'false' } } },
     { "a trusted key can be chosen as ours", { { ' and not trusted[k] then', ' then' } } },
     { "a waiting stream is not rechecked on settle", {
-        { "        if I.TryDeliver(key, buf) then return end          -- Battle.net may vouch for it now\n", "" } } },
+        { "        I.RecheckAwaiting(buf.id)\n        if S.buffers[key] ~= buf then return end\n", "" } } },
     { "an inert Peers answers nil", { { 'if name == "Peers" then return {} end', '' } } },
     { "a failed MAC is refused, not waited on", { { "        if not sender then return false end",
         "        if not sender then S.buffers[key], S.refused[key] = nil, time(); return true end" } } },
@@ -98,7 +98,7 @@ local M = {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
           '    if second ~= nil and second ~= "" then' } } },
     { "MINOR not raised over the pilot copy", {
-        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 4', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 5', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
     -- (No "MINOR left at 2" mutation: that is what test_upgrade 4d's freeze
     -- guard catches in a normal run, since r2's manifest no longer matches,
     -- and that guard is off here because every mutant differs from r2.)
@@ -132,19 +132,51 @@ local M = {
     { "the MAC is not checked", { { "buf.tag, buf.sidText, buf.n, hash) == buf.mac then",
                                     "buf.tag, buf.sidText, buf.n, hash) ~= nil then" } } },
     { "a complete stream is not kept for its hello", {
-        { "buf.awaitUntil = time() + AWAIT_HELLO\n        I.ArmSettle(key, buf)", "S.buffers[key] = nil" } } },
+        { "    if S.buffers[key] == buf then I.ArmSettle(key, buf) end\n", "    S.buffers[key] = nil\n" } } },
+    { "a completed stream delivered ahead of waiting ones", {
+        { "    I.RecheckAwaiting(buf.id)\n    if S.buffers[key] == buf then I.ArmSettle(key, buf) end",
+          "    if not I.TryDeliver(key, buf) then I.ArmSettle(key, buf) end" } } },
     { "no recheck when a hello lands", { { "    I.SendHello(id, \"answer\")\n    I.RecheckAwaiting(id)",
                                            "    I.SendHello(id, \"answer\")" } } },
     -- Stream ids (§5.2)
     { "the sid floor keyed by id", { { 'local floorKey = buf.tag .. "|" .. tostring(sender.guid)',
                                        'local floorKey = buf.tag .. "|" .. tostring(buf.id)' } } },
     { "no sid floor", { { "if S.floors[floorKey] and buf.sid <= S.floors[floorKey] then return true end", "" } } },
+    -- Messages mode (#18) and independent tags (#17)
+    { "messages mode ignored on receive", { { "if inst and inst.messages == true then", "if false then" } } },
+    { "every instance in messages mode", { { "if opts.messages then inst.messages = true end", "inst.messages = true" } } },
+    { "messages: a sid delivered twice", { { "        if sids[at - 1] == sid then return false end\n", "" } } },
+    { "messages: no floor below the window", { { "    if sid <= rec.below then return false end\n", "" } } },
+    { "messages: the window never forgets", { { "if #sids > MESSAGE_WINDOW then", "if false then" } } },
+    { "messages: the window out of order", { { "while at > 1 and sids[at - 1] >= sid do", "while false do" } } },
+    { "messages: the record keyed by id", { { "if not I.FirstDelivery(floorKey, buf.sid) then return true end",
+                                              'if not I.FirstDelivery(buf.tag .. "|" .. buf.id, buf.sid) then return true end' } } },
+    { "waiting streams released in table order", {
+        { "    table.sort(waiting, function(a, b) return (a.buf.seq or 0) < (b.buf.seq or 0) end)\n", "" } } },
+    { "a settle timer delivers only its own stream", {
+        { "        I.RecheckAwaiting(buf.id)\n        if S.buffers[key] ~= buf then return end",
+          "        if I.TryDeliver(key, buf) then return end" } } },
+    { "the cap evicts a message", { { "if perId >= cap and inst.messages ~= true then",
+                                      "if perId >= cap then" } } },
+    { "the cap counted across tags", { { "if b.id == id and b.tag == tag then perId = perId + 1 end",
+                                         "if b.id == id then perId = perId + 1 end" } } },
+    { "messages get the snapshot cap", { { "local cap = inst.messages == true and STREAMS_PER_ID_MESSAGES or STREAMS_PER_ID",
+                                           "local cap = STREAMS_PER_ID" } } },
+    { "the sid floor not keyed by tag", { { 'local floorKey = buf.tag .. "|" .. tostring(sender.guid)',
+                                            'local floorKey = tostring(sender.guid)' } } },
+    { "migration sets messages on an older instance", {
+        { "    if inst.maxPayload == nil then inst.maxPayload = 16384 end\n",
+          "    if inst.maxPayload == nil then inst.maxPayload = 16384 end\n    inst.messages = true\n" } } },
+    { "the cap evicts another tag's stream", { { "if b.id == id and b.tag == tag and (not oldSid",
+                                                 "if b.id == id and (not oldSid" } } },
+    { "messages not a boolean is accepted", { { 'if opts.messages ~= nil and type(opts.messages) ~= "boolean" then',
+                                                "if false then" } } },
     { "lastSid not read back from the store", {
         { 'if type(t.lastSid) == "number" and t.lastSid > lastSid and t.lastSid < 1e13 then lastSid = t.lastSid end', "" } } },
     -- Framing and caps (§2, §5.2)
     { "the data body is split on |", { { '|([^|]*)|([^|]*)|(.*)$")', '|([^|]*)|([^|]*)|([^|]*)")' } } },
     { "no chunk cap", { { "if i < 1 or i > n or n > MAX_CHUNKS then return end", "if i < 1 or i > n then return end" } } },
-    { "no per-sender stream cap", { { "if perId >= STREAMS_PER_ID or total >= STREAMS_TOTAL then",
+    { "no per-sender stream cap", { { "if perId >= cap or total >= STREAMS_TOTAL then",
                                       "if total >= STREAMS_TOTAL then" } } },
     { "no maxPayload on receive", { { "if not payload or #payload > inst.maxPayload then", "if not payload then" } } },
     { "an idle stream never settles", { { "local wait = buf.complete and AWAIT_HELLO or STREAM_SETTLE",

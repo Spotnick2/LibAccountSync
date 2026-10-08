@@ -51,6 +51,7 @@ local Sync = LibStub("LibAccountSync-1.0"):New({
   store  = function() return GlassChatDB and GlassChatDB.accountSync end, -- a getter
   report = function(text, kind) end,               -- optional
   maxPayload = 16384,                              -- optional; at most the wire ceiling, 32768
+  messages = true,                                 -- optional, MINOR 5: messages, not snapshots
 })
 
 Sync.Send(payload [, onResult])  -- returns the destination count, or nil, reason
@@ -77,6 +78,50 @@ Sync.Diagnostics()               -- iterator of lines: the /alts bnet readout
 - **One mechanism for instance functions.** Every instance function is a thin closure,
   `function(...) return lib.impl.Send(inst, ...) end`, so an instance made by an older copy runs
   the newest code (§4).
+
+### Snapshots or messages (MINOR 5, #17, #18)
+Each tag's delivery has one of two meanings, chosen at `New`:
+- **Snapshots (the default).** Each stream replaces the last, so the receiver keeps a sid floor per
+  (tag, sender GUID) and drops a stream at or below it (§5.2). An older snapshot completing after a
+  newer one is dropped on purpose.
+- **Messages (`messages = true`).** Streams are independent (AltStable's request, reply and ping),
+  so dropping an overtaken one loses data. Each authenticated stream is delivered **once**, in
+  completion order, including streams that complete before their sender is proven: a hello or
+  Battle.net releases them in the order they completed (a sequence recorded at completion), not
+  in sid, admission or timer order. Every completion goes through that same ordered drain, so a
+  stream completing after its sender turns verified never overtakes one already waiting. A
+  waiting stream that still can't be delivered (its MAC fails) doesn't hold back the ones after
+  it. The floor is replaced by a record per (tag, sender GUID) of the newest 256
+  sids delivered; a sid in it, or at or below the newest one forgotten, is refused. `sid` still
+  reaches the handler, so a host that wants order applies it itself.
+  - **Stated limits.** A stream overtaken by more than 256 newer messages from the same sender is
+    refused when it completes. A fifth stream open at once from one sender id on one messages tag
+    is refused (the cap below). A message that completes while the host has no handler, or is
+    switched off, is used up, as a snapshot is: register `OnMessage` right after `New`. Data
+    can't arrive before login and a handshake.
+  - **Detection: `inst.messages == true`.** Set by `New` only in a copy that honours the option,
+    and never changed afterwards. An older copy ignores an unknown option, and an instance it made
+    keeps `messages` nil when a newer copy takes it over (the option isn't kept, and changing a
+    tag's delivery mid-session would be its own surprise). A host that asked for messages and
+    sees nil is getting snapshots, and keeps its workaround.
+  - A `messages` that isn't a boolean is an error, like the other options.
+- **The wire, the MAC and admission are unchanged.** What is authenticated is the same; only the
+  rule for which authenticated sid is delivered differs, and the receiver alone applies it.
+- **Several snapshot kinds in one addon (#17): one instance per kind, each with its own tag, on
+  the same store.** The floor is per tag, so `New({ addon = "GlassChatST", store = sameGetter })`
+  beside `"GlassChat"` gives the settings their own floor, on every released copy. Nothing else is
+  per instance: hellos, peers, nonces and proofs belong to the library, and the key, trust and
+  `lastSid` to the store, which both instances read as one table (§3). The cost is a tag. The one
+  shared thing a host sees is `enabled`, kept in the store: switching one instance off switches
+  the other off too, unless the other's own switch was set this session, so a host flips both
+  together. A channel field in the data frame was rejected: wire 1's data frame can't
+  grow (§2), and the tag already is that field.
+- **The stream cap is per (sender id, tag)** since MINOR 5: 2 open streams for a snapshot tag, 4
+  for a messages tag; the total (8) and the byte cap (128 KB) still bound memory (§5.2). At the cap
+  a newer stream evicts the oldest only when both are **snapshots of that tag**, which the floor
+  would drop anyway; a message is never evicted, the newcomer is refused. Before MINOR 5 the cap
+  was per id, and a newer stream evicted the oldest of any tag, losing another kind's stream (#17)
+  or a message (#18).
 
 ### `store`
 - **A getter, called on every access**, returning the host's table, or nil while its
@@ -148,7 +193,7 @@ sync).
     - `"key"`: its hello carried a trusted household key;
     - `"proof"`: an HMAC proof between blank presences.
 - **`sid`** is monotonic per sender (§5.2). It lets a host order snapshots that arrive from
-  different accounts.
+  different accounts, or messages from one (MINOR 5).
 - **The payload is data, never code.** The library never `loadstring`s anything. The handler
   runs under `xpcall`, and an error is reported through that host's `report`. One host's error
   stops neither another host's delivery nor the library.
@@ -441,8 +486,8 @@ and be bound as one of our characters.
 | **A key or proof is believed only from an id that is verified, ours by elimination, or already sent our nonce** | AltStable believes a trusted key from any id (`Core.lua` 3490). If our key ever leaked, any friend could be believed and could rewrite the lists, with no relay needed |
 | **`theirNonce` is stored only for an id that is verified, ours by elimination, or proven this session** | AltStable stores it before any check (`Core.lua` 3483). "Proven this session" keeps a reloaded peer working while the friends list is failing closed |
 | **Project and region are in the proof and the MAC** | A beta key copied to live can't prove there |
-| **Monotonic sid:** `sid = max(GetServerTime() * 1000, lastSid + 1)`, with `lastSid` kept in the store (§3), so it survives a `/reload` in the same second and has no counter to exhaust: past 1000 sends in a second it runs ahead of the clock and stays monotonic. One counter serves every tag. Documented limit: after a client **crash** SavedVariables aren't written, so a send in the same second can repeat or fall below an old sid and is refused until the clock passes it. The receiver keeps a floor per **(tag, sender GUID)** for the session, raised only after an authenticated completion, and accepts only higher sids | GlassChat applies a snapshot wholesale. Two genuine sends arriving out of order, or a relay replaying an old genuine stream under its own id, would otherwise roll the lists back. Keying by GUID, which the proof binds, rather than by the session id handle, covers the replay |
-| **Caps:** the 32 KB ceiling and the `n` cap (§2); 2 concurrent streams per sender id and 8 in total; at most 128 KB buffered; the 6 s settle and the 60 s sweep; a refused stream stays refused; every message at most 255 bytes | AltStable has no limit on streams, `total` or size, and `StreamReady` loops to an unchecked `buf.total`: a freeze a peer can trigger |
+| **Monotonic sid:** `sid = max(GetServerTime() * 1000, lastSid + 1)`, with `lastSid` kept in the store (§3), so it survives a `/reload` in the same second and has no counter to exhaust: past 1000 sends in a second it runs ahead of the clock and stays monotonic. One counter serves every tag. Documented limit: after a client **crash** SavedVariables aren't written, so a send in the same second can repeat or fall below an old sid and is refused until the clock passes it. The receiver keeps a floor per **(tag, sender GUID)** for the session, raised only after an authenticated completion, and accepts only higher sids. A messages host (MINOR 5, §1) keeps instead the newest 256 sids delivered per (tag, sender GUID) and refuses those and anything older: every sid at most once, in any order | GlassChat applies a snapshot wholesale. Two genuine sends arriving out of order, or a relay replaying an old genuine stream under its own id, would otherwise roll the lists back. Keying by GUID, which the proof binds, rather than by the session id handle, covers the replay |
+| **Caps:** the 32 KB ceiling and the `n` cap (§2); 2 concurrent streams per sender id and tag (4 for a messages tag, MINOR 5) and 8 in total; at most 128 KB buffered; the 6 s settle and the 60 s sweep; a refused stream stays refused; every message at most 255 bytes | AltStable has no limit on streams, `total` or size, and `StreamReady` loops to an unchecked `buf.total`: a freeze a peer can trigger |
 | **Reset `bnetUpSince` on `BN_DISCONNECTED`** too, not only on `PLAYER_LOGIN` and `BN_CONNECTED` | A reconnecting friends list is loading again |
 | **Entropy.** One SHA-256 over AltStable's sources (`Core.lua` 877-884) plus `GetServerTime()` and `fastrandom()`. It makes the key (once ever) and the nonces | The client has no cryptographic random source, so a key made once from many sources is the best available |
 
@@ -649,6 +694,10 @@ tests/test_stores.lua  test_upgrade.lua  test_isolation.lua  test_ctl.lua  test_
   - an old stream replayed under another id;
 - an inert `New`;
 - tag routing;
+- messages mode (MINOR 5): an overtaken stream delivers; a sid once per sender GUID, after the
+  finished record expires and under another id; the 256-sid window, out of order; the stream cap
+  per tag, evicting neither a message nor another tag's stream; two tags on one store; an instance
+  an older copy made never claims the mode;
 - one host's handler error isolated from another's.
 
 ### Upgrade and isolation
@@ -667,7 +716,9 @@ red:
 - drop a fail-closed branch;
 - accept our own key;
 - skip the MAC;
-- key the sid floor by id;
+- key the sid floor by id (and the messages record);
+- deliver a message sid twice, or below the window;
+- let the stream cap evict a message or another tag's stream;
 - drop the sender GUID from the MAC;
 - drop a complete stream instead of keeping it awaiting its hello;
 - split the data body on `|`;
@@ -773,3 +824,33 @@ Asked for by AltStable (AltStable#198), settled on the issue with its session.
 - Codex (owner-launched) at `bc5fbf5`, the merged head: no actionable findings. It confirmed the
   destination set only narrows, at most one destination, and wire, MAC, store and ownership
   unchanged. Tagged `r4` on `830017a`.
+
+### MINOR 5: messages mode and independent kinds (#17, #18, 2026-10-07)
+Both issues are the sid floor dropping a stream that nothing newer replaces: GlassChat's lists
+overtaken by its settings over one tag (#17, found in a Codex review of GlassChat#52), and
+AltStable's database reply overtaken by its own request or ping (#18, AltStable#198's review).
+- #17: no library change needed for the floor itself; one tag per snapshot kind on one store
+  (§1), documented and tested. The asked-for channel field would have been a wire change.
+- #18: `messages = true`, detected by `inst.messages == true` (§1). Replay protection moves from
+  the floor to a bounded record of delivered sids; the MAC, its GUID binding and admission are
+  untouched. A replay within the session is refused (the record, per sender GUID), and one across
+  sessions fails the MAC as before (a new receiver nonce).
+- Both: the stream cap is per (sender id, tag) and evicts only an older snapshot of that tag.
+- Wire, store, the reasons enum and the snapshot default unchanged. `Diagnostics` names the mode.
+- Review: `/code-review high` on PR #19 (owner-launched), 9 findings. Taken: the cap counted per id
+  but evicting per tag starved a third tag (now per (id, tag), as the review proposed); a third
+  open message refused (4 per messages tag); the window raised from 64 to 256, kept sorted so
+  eviction doesn't scan; mutations for the tag in the floor key and for an older copy's instance
+  claiming the mode. Recorded, not changed: a message completing with no handler is used up, as a
+  snapshot is (stated in §1); a replayed sid is refused only after its MAC is checked, as for
+  snapshots, since the GUID at admission may not be the one authenticated at completion.
+- Codex (owner-launched) at `cafd53a`, one P2, taken: streams waiting for their sender's proof
+  were released in table order when the hello landed, and a settle timer from admission could
+  release a later-completed stream first. Each complete stream now records a completion sequence,
+  and both paths release an id's waiting streams through `RecheckAwaiting`, sorted by it. Tested
+  with four messages completing in an order unlike their sids and admission, released by a hello
+  and by Battle.net.
+- Codex follow-up at `303c362`, one P2, taken: a stream completing just after its sender turned
+  verified was delivered directly, ahead of one still waiting for its timer. `Complete` now goes
+  through the same ordered drain (`RecheckAwaiting`). Tested with the presence turning valid and
+  a new message arriving before any timer fires; mutation red.

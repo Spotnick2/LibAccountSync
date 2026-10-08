@@ -854,3 +854,5 @@ AltStable's database reply overtaken by its own request or ping (#18, AltStable#
   verified was delivered directly, ahead of one still waiting for its timer. `Complete` now goes
   through the same ordered drain (`RecheckAwaiting`). Tested with the presence turning valid and
   a new message arriving before any timer fires; mutation red.
+- Merged as `76fedef` and tagged `r5` there. Not yet run in game; GlassChat (#17, two tags) and
+  AltStable's migration (#18, messages mode) are its first consumers.

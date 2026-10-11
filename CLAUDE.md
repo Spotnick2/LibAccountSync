@@ -24,16 +24,16 @@ adversarial review first.
 
 - `docs/PLAN.md`: the design, every decision and why, and the review log. Section numbers (§n)
   in the code refer to it.
-- `C:\Projects\References\EMBEDDED-LIBRARIES.md`: how an embedded library is built, versioned,
+- `C:\Projects\WoW\References\EMBEDDED-LIBRARIES.md`: how an embedded library is built, versioned,
   upgraded in place, packaged and tested here.
-- `C:\Projects\AltStable\docs\SYNC-DISCOVERY.md`: the design this library starts from, with
+- `C:\Projects\WoW\AltStable\docs\SYNC-DISCOVERY.md`: the design this library starts from, with
   measured behaviour and three adversarial review rounds. Its closed routes stay closed.
   **Never edit AltStable from this repo's sessions.** It keeps its own channel until it migrates
   in its own session.
-- `C:\Projects\LibGlass` (one runtime file, instances, upgrade tests) and
-  `C:\Projects\LibGroupBuffs` (consumers, version fixtures): the templates.
-- `C:\Projects\References\PORTING-TBC-TO-FOREVER.md` and
-  `C:\Projects\References\forever-api-1.60.1.70235.md`: client facts and the API dump (70235: the
+- `C:\Projects\WoW\LibGlass` (one runtime file, instances, upgrade tests) and
+  `C:\Projects\WoW\LibGroupBuffs` (consumers, version fixtures): the templates.
+- `C:\Projects\WoW\References\PORTING-TBC-TO-FOREVER.md` and
+  `C:\Projects\WoW\References\forever-api-1.60.1.70235.md`: client facts and the API dump (70235: the
   documented surface is identical to 70205's).
 
 ## Layout

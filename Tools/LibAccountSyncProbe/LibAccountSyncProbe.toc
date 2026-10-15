@@ -1,9 +1,10 @@
 ## Interface: 16001
-## Title: LibAccountSync Probe
-## Notes: In-game measurement probe for LibAccountSync-1.0 (docs/PLAN.md section 7). Never shipped: lives under Tools/, which every consumer's .pkgmeta ignores.
+## Title: LibAccountSyncProbe
+## Notes: Throwaway probe for LibAccountSync-1.0: the in-game measurements (docs/PLAN.md section 7) and each release's two-account check. A ForeverProbe module: /fp las. Never shipped: lives under Tools/, which every consumer's .pkgmeta ignores.
 ## Author: Spotnick
 ## Version: dev
+## Dependencies: ForeverProbe
 ## SavedVariables: LibAccountSyncProbeDB
 
 Libs\LibAccountSync-1.0\LibAccountSync-1.0.xml
-Probe.lua
+LibAccountSyncProbe.lua

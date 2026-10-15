@@ -16,7 +16,9 @@ local function read(path)
     return (s:gsub("\r\n", "\n"))
 end
 
--- { name, { { from, to }, ... } }: plain-text substitutions, each matching once.
+-- { name, { { from, to }, ... }, file? }: plain-text substitutions, each
+-- matching once, in the runtime, or in the probe when file is PROBE.
+local PROBE = "Tools/LibAccountSyncProbe/LibAccountSyncProbe.lua"
 local M = {
     -- Ownership fails closed (§5.1, §5.2)
     { "friends list: no settle wait", { { "if (time() - S.upSince) < FRIENDS_SETTLE then return nil end", "" } } },
@@ -236,9 +238,31 @@ local M = {
     { "a raw read outside the readers", {
         { "    local rec = I.GameRec(id)\n    if not rec or rec.unknown or rec.isOnline == false",
           "    local raw = C_BattleNet.GetGameAccountInfoByID(id)\n    local rec = I.GameRec(id)\n    if not rec or rec.unknown or rec.isOnline == false" } } },
+
+    -- The probe (test_probe; it skips, so it is never red, without ..\ForeverProbe)
+    { "probe: lines go to chat", { { '    Probe:Say(("%s %s %s"):format(date("%H:%M:%S"), Where(), text))',
+        '    Probe:Say(("%s %s %s"):format(date("%H:%M:%S"), Where(), text)); print(text)' } }, PROBE },
+    { "probe: the log isn't bound", { { "        Probe:UseLog(db.log, MAX_LOG)", "" } }, PROBE },
+    { "probe: clear replaces the log", { { 'function() Probe:ClearLog(); Log("log cleared") end',
+        'function() LibAccountSyncProbeDB.log = {}; Log("log cleared") end' } }, PROBE },
+    { "probe: the filler isn't checked", { { " and payload:sub(#head + 1) == Filler(#payload - #head)", "" } }, PROBE },
+    { "probe: a duplicate isn't flagged", { { "local dup = seen[i]", "local dup = false" } }, PROBE },
+    { "probe: any Battle.net message is a ping", { { "if IsS(prefix) or prefix ~= PROBE_PREFIX then return end",
+        "if IsS(prefix) then return end" } }, PROBE },
+    { "probe: ProbeMsg gets snapshots", { { ", report = Report, messages = true })", ", report = Report })" } }, PROBE },
+    { "probe: sendto broadcasts", { { 'Sync.SendTo(p.guid, payload, OnResult("sendto"))',
+        'Sync.Send(payload, OnResult("sendto"))' } }, PROBE },
+    { "probe: results pass on anything", { { "check = function() return round.sent == expected and round.failed == 0, Tally() end",
+        "check = function() return true, Tally() end" } }, PROBE },
+    { "probe: a named presence is blank", {
+        { 'and (g.characterName == nil or g.characterName == "" or g.playerGuid == nil or g.playerGuid == "") then',
+          "then" } }, PROBE },
+    { "probe: pings before the mark count", { { "check = function() return pingsHeard > pingMark,",
+        "check = function() return pingsHeard >= pingMark," } }, PROBE },
 }
 
-local source = read("LibAccountSync.lua")
+local sources = { runtime = read("LibAccountSync.lua"), [PROBE] = read(PROBE) }
+local ENV = { runtime = "LIBACCT_MUTANT", [PROBE] = "LIBACCT_PROBE_MUTANT" }
 local tests = {}
 for name in io.popen('dir /b tests\\test_*.lua 2>NUL || ls tests/test_*.lua'):lines() do
     tests[#tests + 1] = "tests/" .. name:gsub("^tests[/\\]", "")
@@ -252,7 +276,7 @@ local survived, bad, ran = {}, {}, 0
 -- Control: the unmutated source, through the same path, must be green, or a
 -- "red" below proves nothing.
 do
-    local f = assert(io.open(mutant, "wb")); f:write(source); f:close()
+    local f = assert(io.open(mutant, "wb")); f:write(sources.runtime); f:close()
     for _, t in ipairs(tests) do
         local rc = os.execute(('set "LIBACCT_MUTANT=%s" && "%s" %s >NUL 2>&1'):format(mutant, LUA, t))
         if rc ~= 0 and rc ~= true then
@@ -265,7 +289,8 @@ end
 
 for _, m in ipairs(M) do
     if not filter or m[1]:find(filter, 1, true) then
-        local src, ok = source, true
+        local target = m[3] or "runtime"
+        local src, ok = sources[target], true
         for _, r in ipairs(m[2]) do
             local i, j = src:find(r[1], 1, true)
             if not i or src:find(r[1], j + 1, true) then ok = false; break end
@@ -278,7 +303,7 @@ for _, m in ipairs(M) do
             local f = assert(io.open(mutant, "wb")); f:write(src); f:close()
             local red
             for _, t in ipairs(tests) do
-                local cmd = ('set "LIBACCT_MUTANT=%s" && "%s" %s >NUL 2>&1'):format(mutant, LUA, t)
+                local cmd = ('set "%s=%s" && "%s" %s >NUL 2>&1'):format(ENV[target], mutant, LUA, t)
                 local rc = os.execute(cmd)
                 if rc ~= 0 and rc ~= true then red = t; break end
             end

@@ -1,8 +1,10 @@
 r"""Print the LibAccountSync probe's log from every account's SavedVariables.
 
-The probe (/lasprobe ...) appends to LibAccountSyncProbeDB.log, which the
-client writes to WTF\Account\<account>\SavedVariables\LibAccountSyncProbe.lua
+The probe (/fp las ..., a ForeverProbe module) appends to
+LibAccountSyncProbeDB.log, which the client writes to WTF\Account\<account>\SavedVariables\LibAccountSyncProbe.lua
 on /reload and on logout - not before. So /reload each character after a round.
+A line is ForeverProbe's stamp (GetTime, run number), then the wall clock and
+the character; logs from before the migration start with the wall clock.
 
     python Tools/read-wirelog.py                # everything
     python Tools/read-wirelog.py --since 23:10  # from a time on
@@ -34,6 +36,12 @@ def log_lines(path):
     return out
 
 
+def clock(line):
+    """The line's wall clock, HH:MM:SS: the first one in it."""
+    m = re.search(r"(?<![\d:])(\d\d:\d\d:\d\d)(?![\d:])", line)
+    return m.group(1) if m else ""
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--wtf", default=DEFAULT_WTF)
@@ -46,7 +54,7 @@ def main():
         return
     for path in files:
         account = path.split(os.sep)[-3]
-        lines = [l for l in log_lines(path) if not a.since or l[:len(a.since)] >= a.since]
+        lines = [l for l in log_lines(path) if not a.since or clock(l)[:len(a.since)] >= a.since]
         print("== account %s: %d lines ==" % (account, len(lines)))
         for l in lines:
             print("  " + l)

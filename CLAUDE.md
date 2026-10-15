@@ -44,7 +44,11 @@ adversarial review first.
   `lib.ready = MINOR` is its last line.
 - **`Tools\deploy.ps1`**: copies this checkout into `AddOns\<Addon>\Libs\LibAccountSync-1.0`.
   **`Tools\LibAccountSyncProbe\`**, `Tools\deploy-probe.ps1`, `Tools\read-wirelog.py`: the
-  in-game measurement probe (`/lasprobe`) and its log reader. Never shipped.
+  in-game probe and its log reader. Never shipped. A ForeverProbe module (`/fp las <command>`,
+  `C:\Projects\WoW\References\PROBES.md`); the deploy installs `..\ForeverProbe` first. Each
+  release's two-account check is `/fp steps las check`; PLAN §7.3 and §7.9 are `blank` and `relay`.
+  After the owner's `/reload` on both accounts, read the results yourself: `read-wirelog.py` (every
+  account's log) and `ForeverProbe.lua`'s `steps.records`.
 - **`tests\`**: see Testing.
 
 ## The contract (frozen within MAJOR; it only grows)
@@ -104,6 +108,10 @@ pwsh tests/run.ps1                                       # luac -p + every tests
   `session()` and `Peer`, the other account, which builds hellos, proofs and MACs from the plan's
   formulas independently of the library.
 - **Every new test is mutation-tested**: add its mutation to `tests/mutate.lua` and see it red.
+  A probe mutation names the probe file as its third field.
+- `test_probe` loads the host from `..\ForeverProbe` (or `$env:FOREVERPROBE`) and runs locally
+  only: CI sets `FOREVERPROBE_OPTIONAL=1`, which skips it. Run `tests/run.ps1` before a PR that
+  touches the probe.
   The control run must be green; a mutation that no longer applies must be fixed, not dropped.
 - Upgrade tests use a synthetic newer copy, plus the frozen `cc92deb` pilot copy (MINOR 1) loaded
   before the current one. **Each release** adds `tests/fixtures/LibAccountSync-rN.lua` and

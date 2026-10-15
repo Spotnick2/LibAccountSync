@@ -108,7 +108,8 @@ pwsh tests/run.ps1                                       # luac -p + every tests
   `session()` and `Peer`, the other account, which builds hellos, proofs and MACs from the plan's
   formulas independently of the library.
 - **Every new test is mutation-tested**: add its mutation to `tests/mutate.lua` and see it red.
-  A probe mutation names the probe file as its third field.
+  A mutation of the probe or of `read-wirelog.py` names that file as its third field;
+  `tests/test_wirelog.py` (Python, run by `run.ps1` and CI) covers the reader.
 - `test_probe` loads the host from `..\ForeverProbe` (or `$env:FOREVERPROBE`) and runs locally
   only: CI sets `FOREVERPROBE_OPTIONAL=1`, which skips it. Run `tests/run.ps1` before a PR that
   touches the probe.

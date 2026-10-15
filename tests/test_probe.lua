@@ -99,6 +99,20 @@ check(logHas("messages: batch") and logHas("4 sends -> 1,1,1,1"), "messages send
 check(logHas("ping 3 -> 0"), "ping sends on the probe's prefix")
 check(logHas("onResult send \"Karuzo\": sent nil"), "onResult lines are logged")
 
+-- 2b. A result ChatThrottleLib delivers late counts in the round that sent
+-- it, never in a later one's (Codex on #24).
+WoW.ctlDefer = true
+las("send 300")
+local r1 = T.Round()
+las("sendto")
+local r2 = T.Round()
+check(r1 ~= r2, "each send starts its own round")
+eq(r2.sent, 0, "nothing is counted before ChatThrottleLib sends")
+WoW.ctlDrain()
+WoW.ctlDefer = false
+eq(r1.sent, 1, "the late Send result counts in the Send's round")
+eq(r2.sent, 1, "  and the SendTo's in its own")
+
 -- 3. What reached the other account is what the probe meant to send.
 local function receivedOK(tag)
     local all, any = true, false
@@ -195,18 +209,51 @@ eq(rec.results[4] and rec.results[4].check, "FAIL", "the results check fails wit
 S.Stop()
 WoW.bn.accounts[3].isOnline = true
 
--- 10. The blank procedure's id check counts a blank presence, and only that.
+-- 10. The blank procedure (7.3) is about one account: the other own account,
+-- pinned while named, then blank, proven by key or proof, and sent to while
+-- still blank. A blank friend beside a named own account proves nothing.
+T.Sync.Rescan()
+B:deliver(B:hello({ key = B.key }))
+eq(#T.Sync.Peers(), 1, "the other account is a peer again")
+Peer.new({ id = 5, name = "Friend", guid = "Player-1-0000000F", bnet = 9, blank = true })
+WoW.bn.friends = { { 5 } }
 T.Probe:StartSteps("blank")
 rec = FP.db.steps.records["LibAccountSyncProbe/blank"]
+local function outcome(i) return rec.results[i] and rec.results[i].check end
+local function detail(i) return tostring(rec.results[i] and rec.results[i].checkDetail) end
 S.Next()
+S.Run()                                            -- 2: pin
+eq(outcome(2), "PASS", "the other account is pinned: " .. detail(2))
+S.Run()                                            -- 3: the friend is blank, ours is named
+eq(outcome(3), "FAIL", "a blank friend beside a named own account is not 7.3: " .. detail(3))
+S.Run()                                            -- 4
+eq(outcome(4), "FAIL", "a peer proven by Battle.net is not 7.3: " .. detail(4))
+S.Back(); S.Back()
+B:setBlank(true)
 S.Run()
-eq(rec.results[2] and rec.results[2].check, "FAIL", "a named presence is not blank")
+eq(outcome(3), "PASS", "the pinned account's presence is blank: " .. detail(3))
+-- Blank, but no hello since: the binding Battle.net made before is all there is.
+local bound = T.Sync.Peers()[1]
+eq(bound and bound.proven, "bnet", "before its hello, the peer is still the Battle.net binding")
+S.Run()
+eq(outcome(4), "FAIL", "a blank presence still bound by Battle.net is not 7.3: " .. detail(4))
+S.Back()
+B:deliver(B:hello({ key = B.key }))                -- its hello after the reload, presence blank
+S.Run()
+eq(outcome(4), "PASS", "it is a peer by key or proof while blank: " .. detail(4))
+B:setBlank(false)                                  -- filled in before the send
+S.Run()
+eq(outcome(5), "FAIL", "a send after the presence filled in is not 7.3: " .. detail(5))
 S.Back()
 B:setBlank(true)
 S.Run()
-eq(rec.results[2] and rec.results[2].check, "PASS", "a blank presence is counted: " .. tostring(rec.results[2] and rec.results[2].checkDetail))
+eq(outcome(5), "PASS", "SendTo reaches the pinned account while blank: " .. detail(5))
+check(logHas("sendto \"Karuzo\" \"Player-1-0000000B\""), "  the pinned account, not the first peer")
+S.Run()
+eq(outcome(6), "PASS", "its result came back: " .. detail(6))
 S.Stop()
 B:setBlank(false)
+WoW.bn.accounts[5], WoW.bn.friends = nil, {}
 
 -- 11. The relay procedure counts pings since its mark.
 T.Probe:StartSteps("relay")

@@ -107,14 +107,17 @@ local function Returned(count, why)
     return count, why
 end
 
+-- Made after NewRound, so a result counts in the round that sent it: a
+-- callback ChatThrottleLib delivers late never lands in a later round.
 local function OnResult(label)
+    local r, t0 = round, lastSendAt
     return function(sender, status, reason)
-        if status == "sent" then round.sent = round.sent + 1 else
-            round.failed = round.failed + 1
-            round.reasons[#round.reasons + 1] = tostring(reason)
+        if status == "sent" then r.sent = r.sent + 1 else
+            r.failed = r.failed + 1
+            r.reasons[#r.reasons + 1] = tostring(reason)
         end
         Log(("  onResult %s %s: %s %s after %.0f ms"):format(label, V(sender.name), status, tostring(reason),
-            debugprofilestop() - lastSendAt))
+            debugprofilestop() - t0))
     end
 end
 
@@ -247,8 +250,15 @@ local function Record(label, g)
     Log("  " .. label .. ": " .. table.concat(parts, " "))
 end
 
--- Logs every id's record. Returns how many WoW ids are blank: online, no
--- name or no GUID (section 7.3, 7.9).
+-- A blank WoW presence: online, but no name or no GUID (section 7.3, 7.9).
+local function IsBlank(g)
+    return type(g) == "table" and not IsS(g.clientProgram) and g.clientProgram == "WoW"
+        and not IsS(g.isOnline) and g.isOnline ~= false
+        and not IsS(g.characterName) and not IsS(g.playerGuid)
+        and (g.characterName == nil or g.characterName == "" or g.playerGuid == nil or g.playerGuid == "")
+end
+
+-- Logs every id's record. Returns how many WoW ids are blank.
 local function Ids()
     Log("== ids (raw records) ==")
     local blank = 0
@@ -256,16 +266,19 @@ local function Ids()
         local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
         if ok and (IsS(g) or type(g) == "table") then
             Record("id " .. id, g)
-            if not IsS(g) and not IsS(g.clientProgram) and g.clientProgram == "WoW"
-                and not IsS(g.isOnline) and g.isOnline ~= false
-                and not IsS(g.characterName) and not IsS(g.playerGuid)
-                and (g.characterName == nil or g.characterName == "" or g.playerGuid == nil or g.playerGuid == "") then
-                blank = blank + 1
-            end
+            if IsBlank(g) then blank = blank + 1 end
         end
     end
     Log(("ids: %d blank WoW presence(s)"):format(blank))
     return blank
+end
+
+-- The local id whose record names this GUID, while it still does.
+local function IdOf(guid)
+    for id = 1, 128 do
+        local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
+        if ok and type(g) == "table" and not IsS(g.playerGuid) and g.playerGuid == guid then return id end
+    end
 end
 
 local function Secrets()
@@ -439,22 +452,62 @@ Probe:Steps("check", {
     { text = "Now /reload here too, to save this side.", reload = true },
 })
 
-local blankSeen = 0
+-- 7.3's subject is one account: the other own account, pinned while it is
+-- a named peer, with its local id (Battle.net's handle on this client). The
+-- blank record, the proof and the delivery must all be that account's, so a
+-- blank friend beside a named own account proves nothing (Codex on #24).
+local target            -- { guid, name, id }
+local function TargetBlank()
+    if not target then return false, "no account pinned" end
+    local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, target.id)
+    if not ok then return false, "id " .. target.id .. ": " .. tostring(g) end
+    return IsBlank(g), "id " .. target.id .. (IsBlank(g) and " blank" or " not blank")
+end
+local function TargetPeer()
+    for _, p in ipairs(Sync.Peers()) do
+        if target and p.guid == target.guid then return p end
+    end
+end
+local blankAtSend
+
 Probe:Steps("blank", {
     title = "PLAN 7.3: the handshake with a blank presence",
-    rev = 1,
+    rev = 2,
     { text = steadyText },
+    { text = "Pinning the other account: its character and its Battle.net id here, while it is named.",
+      button = "Pin", run = function()
+          target = nil
+          local peers = Sync.Peers()
+          local p = peers[1]
+          local id = p and #peers == 1 and IdOf(p.guid)
+          if id then target = { guid = p.guid, name = p.name, id = id } end
+          Log(("blank: pinned %s"):format(target and (V(target.name) .. " " .. V(target.guid) .. " id " .. id)
+              or ("nothing (" .. #peers .. " peers)")))
+          return target and target.id, #peers
+      end,
+      check = function() return target ~= nil, target and target.id end },
     { text = "On the OTHER account, type /reload. As soon as its loading screen is gone, press Read ids here. "
-          .. "If no presence is blank, press Back and try again: it is rare.", button = "Read ids",
-      run = function() blankSeen = Ids(); return blankSeen end,
-      check = function() return blankSeen >= 1, blankSeen .. " blank" end },
-    { text = "Reading the library's state: the other account should be a peer (proof or key), "
-          .. "with a nonce.", button = "Read state",
-      run = function() Status(); return #Sync.Peers() end,
-      check = function() return #Sync.Peers() >= 1, #Sync.Peers() .. " peer(s)" end },
-    { text = "A 1000-byte payload across.", button = "Send",
-      run = function() return Send(1000) end,
-      check = function() return round.count == 1 and round.failed == 0, tostring(round.count), tostring(round.why) end },
+          .. "If its presence isn't blank, press Back, then Next, and try again: it is rare.", button = "Read ids",
+      run = function() Ids(); return TargetBlank() end,
+      check = function() return TargetBlank() end },
+    { text = "Reading the library's state: the pinned account must be a peer proven by key or proof, "
+          .. "not by Battle.net, while its presence is still blank.", button = "Read state",
+      run = function() Status(); local p = TargetPeer(); return p and p.proven, TargetBlank() end,
+      check = function()
+          local p, blank = TargetPeer(), TargetBlank()
+          return blank and p ~= nil and (p.proven == "key" or p.proven == "proof"),
+                 p and tostring(p.proven) or "not a peer", select(2, TargetBlank())
+      end },
+    { text = "SendTo the pinned account, 1000 bytes, while it is blank.", button = "Send",
+      run = function()
+          blankAtSend = TargetBlank()
+          if not target then return nil, "no account pinned" end   -- never FindPeer's first peer
+          return SendTo(target.guid, 1000)
+      end,
+      check = function()
+          return blankAtSend and round.count == 1 and round.failed == 0, tostring(round.count), tostring(round.why),
+                 "blank at send: " .. tostring(blankAtSend)
+      end },
     ResultsStep("Reading what came back.", 1),
     { text = "On the OTHER account, type /reload, so what it received is on disk. Then press Next here." },
     { text = "Now /reload here too, to save this side.", reload = true },
@@ -537,4 +590,5 @@ Kinds.OnMessage(OnMessageFor("ProbeST"))
 Msgs.OnMessage(OnMessageFor("ProbeMsg"))
 
 NS._test = { Probe = Probe, Sync = Sync, Kinds = Kinds, Msgs = Msgs, Verdict = Verdict, Padded = Padded,
-             Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end }
+             Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end,
+             Round = function() return round end }

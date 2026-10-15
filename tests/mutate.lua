@@ -17,8 +17,10 @@ local function read(path)
 end
 
 -- { name, { { from, to }, ... }, file? }: plain-text substitutions, each
--- matching once, in the runtime, or in the probe when file is PROBE.
+-- matching once, in the runtime, or in the probe (PROBE) or its log reader
+-- (WIRELOG) when file names one.
 local PROBE = "Tools/LibAccountSyncProbe/LibAccountSyncProbe.lua"
+local WIRELOG = "Tools/read-wirelog.py"
 local M = {
     -- Ownership fails closed (§5.1, §5.2)
     { "friends list: no settle wait", { { "if (time() - S.upSince) < FRIENDS_SETTLE then return nil end", "" } } },
@@ -255,19 +257,40 @@ local M = {
     { "probe: results pass on anything", { { "check = function() return round.sent == expected and round.failed == 0, Tally() end",
         "check = function() return true, Tally() end" } }, PROBE },
     { "probe: a named presence is blank", {
-        { 'and (g.characterName == nil or g.characterName == "" or g.playerGuid == nil or g.playerGuid == "") then',
-          "then" } }, PROBE },
+        { '\n        and (g.characterName == nil or g.characterName == "" or g.playerGuid == nil or g.playerGuid == "")', "" } }, PROBE },
     { "probe: pings before the mark count", { { "check = function() return pingsHeard > pingMark,",
         "check = function() return pingsHeard >= pingMark," } }, PROBE },
+    { "probe: a late result lands in the latest round", { { '        if status == "sent" then r.sent = r.sent + 1 else',
+        '        r = round\n        if status == "sent" then r.sent = r.sent + 1 else' } }, PROBE },
+    { "probe: 7.3 takes any blank presence", { { "check = function() return TargetBlank() end },",
+        "check = function() return Ids() >= 1 end }," } }, PROBE },
+    { "probe: 7.3 takes a Battle.net peer", { { '(p.proven == "key" or p.proven == "proof")', "true" } }, PROBE },
+    { "probe: 7.3 sends without checking blank", { { "return blankAtSend and round.count == 1", "return round.count == 1" } }, PROBE },
+
+    -- The log reader (test_wirelog)
+    { "wirelog: a line without a clock is dropped", { { "if c is None or c[:len(since)] >= since]",
+        "if c is not None and c[:len(since)] >= since]" } }, WIRELOG },
+    { "wirelog: no clock from the uptime", { { "        if secs is None and up is not None and run in offsets:",
+        "        if False:" } }, WIRELOG },
+    { "wirelog: the clock is searched for anywhere", { { 'CLOCK = re.compile(r"^(?:\\d+(?:\\.\\d+)?(?: C)? #\\d+ )?(\\d\\d):(\\d\\d):(\\d\\d) ")',
+        'CLOCK = re.compile(r"()(\\d\\d):(\\d\\d):(\\d\\d)")' }, { "s, c = STAMP.match(line), CLOCK.match(line)",
+        "s, c = STAMP.match(line), CLOCK.search(line)" }, { "int(c.group(1)) * 3600 + int(c.group(2)) * 60 + int(c.group(3))",
+        "int(c.group(2)) * 3600 + int(c.group(3)) * 60 + int(c.group(4))" } }, WIRELOG },
+    { "wirelog: the offset is not per run", { { "offsets[run] = secs - up", "offsets.setdefault(None, secs - up); offsets[run] = offsets[None]" } }, WIRELOG },
 }
 
-local sources = { runtime = read("LibAccountSync.lua"), [PROBE] = read(PROBE) }
-local ENV = { runtime = "LIBACCT_MUTANT", [PROBE] = "LIBACCT_PROBE_MUTANT" }
+local sources = { runtime = read("LibAccountSync.lua"), [PROBE] = read(PROBE), [WIRELOG] = read(WIRELOG) }
+local ENV = { runtime = "LIBACCT_MUTANT", [PROBE] = "LIBACCT_PROBE_MUTANT", [WIRELOG] = "LIBACCT_WIRELOG_MUTANT" }
 local tests = {}
-for name in io.popen('dir /b tests\\test_*.lua 2>NUL || ls tests/test_*.lua'):lines() do
-    tests[#tests + 1] = "tests/" .. name:gsub("^tests[/\\]", "")
+for _, ext in ipairs({ "lua", "py" }) do
+    for name in io.popen(('dir /b tests\\test_*.%s 2>NUL || ls tests/test_*.%s'):format(ext, ext)):lines() do
+        tests[#tests + 1] = "tests/" .. name:gsub("^tests[/\\]", "")
+    end
 end
 table.sort(tests)
+
+-- A test file's command line: Lua 5.1, or Python (isolated) for the log reader's test.
+local function run(t) return t:match("%.py$") and ("python -I " .. t) or ('"' .. LUA .. '" ' .. t) end
 
 local mutant = os.tmpname()
 if mutant:sub(1, 1) == "\\" then mutant = (os.getenv("TEMP") or ".") .. mutant end
@@ -278,7 +301,7 @@ local survived, bad, ran = {}, {}, 0
 do
     local f = assert(io.open(mutant, "wb")); f:write(sources.runtime); f:close()
     for _, t in ipairs(tests) do
-        local rc = os.execute(('set "LIBACCT_MUTANT=%s" && "%s" %s >NUL 2>&1'):format(mutant, LUA, t))
+        local rc = os.execute(('set "LIBACCT_MUTANT=%s" && %s >NUL 2>&1'):format(mutant, run(t)))
         if rc ~= 0 and rc ~= true then
             io.write("control run FAILED in " .. t .. ": fix the suite before mutating\n")
             os.exit(1)
@@ -303,7 +326,7 @@ for _, m in ipairs(M) do
             local f = assert(io.open(mutant, "wb")); f:write(src); f:close()
             local red
             for _, t in ipairs(tests) do
-                local cmd = ('set "%s=%s" && "%s" %s >NUL 2>&1'):format(ENV[target], mutant, LUA, t)
+                local cmd = ('set "%s=%s" && %s >NUL 2>&1'):format(ENV[target], mutant, run(t))
                 local rc = os.execute(cmd)
                 if rc ~= 0 and rc ~= true then red = t; break end
             end

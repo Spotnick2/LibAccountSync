@@ -39,6 +39,14 @@ try {
         & $Lua $_.FullName
         if ($LASTEXITCODE -ne 0) { $failed++ }
     }
+    # The probe's log reader is Python (Tools/read-wirelog.py), and so is its test.
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    Get-ChildItem (Join-Path $PSScriptRoot "test_*.py") | Sort-Object Name | ForEach-Object {
+        Write-Host "-- $($_.Name) " -NoNewline -ForegroundColor Cyan
+        if (-not $python) { Write-Host "SKIPPED: no python on PATH" -ForegroundColor Yellow; return }
+        & $python.Source -I $_.FullName
+        if ($LASTEXITCODE -ne 0) { $failed++ }
+    }
     if ($failed -gt 0) { Write-Host "$failed test file(s) FAILED" -ForegroundColor Red; exit 1 }
     Write-Host "All test files passed." -ForegroundColor Green
 }

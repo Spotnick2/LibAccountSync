@@ -7,7 +7,8 @@ Battle.net account, and receive them, with ownership proven first. Single owner 
 **Status: `r5` released** (tag on `76fedef`, MINOR 5: #18 `messages = true` delivery for
 independent messages, #17 one tag per snapshot kind on a shared store, the stream cap per
 (sender, tag); Codex-reviewed). r5 and `r4` (`830017a`, #14 `SendTo`) passed the two-account
-probe check (`/fp steps las check`, all 9 checks) on 2026-10-16, build 70425 (#25). `r3` (`6c888c5`, #7 client
+probe check (`/fp steps las check`, all 9 checks) on 2026-10-16, build 70425, whose documented
+surface is identical to 70450's (#25). `r3` (`6c888c5`, #7 client
 project/region on a blank first run, #8 `bit`-backed SHA-256) was validated by the two-account probe
 check; `r2` (`fdd4a72`) by GlassChat's pilot (#4). MINOR 1 was never tagged: its pilot copy,
 `cc92deb`, failed the first in-game check (#4). All five are frozen in `tests/fixtures/` (r2-r5 with
@@ -33,8 +34,10 @@ adversarial review first.
 - `C:\Projects\WoW\LibGlass` (one runtime file, instances, upgrade tests) and
   `C:\Projects\WoW\LibGroupBuffs` (consumers, version fixtures): the templates.
 - `C:\Projects\WoW\References\PORTING-TBC-TO-FOREVER.md` and
-  `C:\Projects\WoW\References\forever-api-1.60.1.70235.md`: client facts and the API dump (70235: the
-  documented surface is identical to 70205's).
+  `C:\Projects\WoW\References\forever-api-1.60.1.70450.md`: client facts and the API dump. From
+  70235 to 70450 the documented changes are voice chat, Discord, mail transfer, LFG and stat
+  functions, plus two new `C_BattleNet` functions; nothing this library, its probe or its stubs
+  use changed (#27).
 
 ## Layout
 

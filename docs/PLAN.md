@@ -854,5 +854,13 @@ AltStable's database reply overtaken by its own request or ping (#18, AltStable#
   verified was delivered directly, ahead of one still waiting for its timer. `Complete` now goes
   through the same ordered drain (`RecheckAwaiting`). Tested with the presence turning valid and
   a new message arriving before any timer fires; mutation red.
-- Merged as `76fedef` and tagged `r5` there. Not yet run in game; GlassChat (#17, two tags) and
-  AltStable's migration (#18, messages mode) are its first consumers.
+- Merged as `76fedef` and tagged `r5` there. GlassChat (#17, two tags) and AltStable's migration
+  (#18, messages mode) are its first consumers.
+- In game on 2026-10-16, build 1.60.1.70425, two own accounts, `/fp steps las check` (#25): all
+  checks passed, and the receiver verified every payload byte for byte.
+  - r4: Send and `SendTo` (1000 B each) delivered once; `SendTo` to a GUID that isn't a peer is
+    `nil, "no-peers"` with nothing sent.
+  - r5: two snapshot kinds on one store, 4000 B on `Probe` then 500 B on `ProbeST`, both delivered.
+    Four messages on a `messages = true` tag (2000, 1000, 400, 100 B), each delivered once.
+  - ChatThrottleLib ran faster than §7.5's 570 B/s here: 4.5 KB took 2.8 s and 3.5 KB took 3.5 s.
+    Right after login it was slower: a 1000 B send took 6.9 s to 13.7 s to report `sent`.

@@ -158,6 +158,30 @@ check(logHas("send 100 bytes -> nil disabled"), "a send with no destinations is 
 check(not logHas("round complete: 0 of 0"), "  and its round waits for nothing")
 check(not T.Tally():find("on the way", 1, true), "  with nothing pending: " .. T.Tally())
 
+-- 3c. A ready peer held by ChatThrottleLib beside one still handshaking
+-- (Codex on #26): Send returns 1 and reports the other not-ready at once.
+-- That refusal is in the tally, but the round still waits for the held one.
+local C = Peer.new({ id = 4, name = "Thirdalt", guid = "Player-1-0000000C" })
+T.Sync.Rescan()                                    -- bound by Battle.net; no hello from it, so no nonce
+eq(#T.Sync.Peers(), 2, "a second own account, bound but without a nonce")
+WoW.ctlDefer = true
+before = count("round complete: 1 of 1")
+las("send 300")
+check(logHas("send 300 bytes -> 1 nil"), "one destination is counted")
+local held = T.Round()
+eq(held.failed, 1, "the handshaking peer is reported failed at once")
+check(T.Tally():find("1 still on the way", 1, true), "the held send is still pending: " .. T.Tally())
+eq(count("round complete: 1 of 1"), before, "no round complete while it is held")
+WoW.ctlDrain()
+WoW.ctlDefer = false
+eq(count("round complete: 1 of 1"), before + 1, "round complete once the held send reports back")
+check(T.Tally():find("1 sent, 1 failed not-ready", 1, true) and not T.Tally():find("on the way", 1, true),
+      "the tally keeps the refusal, with nothing pending: " .. T.Tally())
+WoW.bn.accounts[C.id] = nil
+T.Sync.Rescan()
+WoW.advance(1)
+eq(#T.Sync.Peers(), 1, "the third account is gone again")
+
 -- 4. The verdicts: a byte changed or a length short is CORRUPTED.
 eq(T.Verdict(T.Sized(1000)), "SIZE OK 1000", "a whole SIZE payload is OK")
 eq(T.Verdict(T.Sized(3)), "SIZE OK 3", "a payload shorter than its head is OK")

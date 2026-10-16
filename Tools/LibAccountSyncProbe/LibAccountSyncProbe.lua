@@ -102,17 +102,23 @@ local function Seconds(bytes) return math.ceil(bytes * 1.25 / BYTES_PER_SECOND) 
 
 -- The latest round, for a procedure's check: what the send call returned
 -- (count, why), how many results it waits for, and the onResult tally.
-local round = { sent = 0, failed = 0, reasons = {}, bytes = 0, t0 = 0 }
+local round = { sent = 0, failed = 0, refused = 0, reasons = {}, bytes = 0, t0 = 0 }
 local function NewRound(bytes)
     lastSendAt = debugprofilestop()
-    round = { sent = 0, failed = 0, reasons = {}, bytes = bytes or 0, t0 = lastSendAt }
+    round = { sent = 0, failed = 0, refused = 0, reasons = {}, bytes = bytes or 0, t0 = lastSendAt }
 end
 
+-- Results back for the round's destinations. A peer whose nonce we don't
+-- hold yet is reported failed/not-ready before Send returns, and isn't one
+-- of the destinations Send counts: it's in the tally, never in this (Codex
+-- on #26).
+local function Answered(r) return r.sent + r.failed - r.refused end
+
 -- "round complete" in the console once every result the round waits for is
--- in: what a results step tells the owner to wait for (#25).
+-- in: what a results step waits for (#25).
 local function Progress(r)
     if not r.expected or r.done then return end
-    local back = r.sent + r.failed
+    local back = Answered(r)
     if r.expected == 0 then r.done = true; return end
     if back >= r.expected then
         r.done = true
@@ -141,6 +147,7 @@ local function OnResult(label)
         if status == "sent" then r.sent = r.sent + 1 else
             r.failed = r.failed + 1
             r.reasons[#r.reasons + 1] = tostring(reason)
+            if reason == "not-ready" and r.expected == nil then r.refused = r.refused + 1 end
         end
         Log(("  onResult %s %s: %s %s after %.0f ms"):format(label, V(sender.name), status, tostring(reason),
             debugprofilestop() - t0))
@@ -429,7 +436,7 @@ end
 
 -- Results the round still waits for (none when its send went nowhere).
 local function Pending()
-    return math.max(0, (round.expected or 0) - round.sent - round.failed)
+    return math.max(0, (round.expected or 0) - Answered(round))
 end
 
 -- The tally, and what is still on the way.

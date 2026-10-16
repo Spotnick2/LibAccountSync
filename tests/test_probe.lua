@@ -212,10 +212,14 @@ T.Probe:StartSteps("check")
 local rec = FP.db.steps.records["LibAccountSyncProbe/check"]
 local nSteps = #FP.procedures["LibAccountSyncProbe/check"].steps
 S.Next()                                           -- 1: the other account is in
--- 2 ran on arrival (auto); every step after it with a run is pressed.
+-- 2 ran on arrival (auto); every step after it with a run is pressed, and a
+-- wait step is polled (the host's OnUpdate does that in game).
+local waits = 0
 for i = 3, nSteps - 2 do
-    if FP.procedures["LibAccountSyncProbe/check"].steps[i].run then S.Run() else S.Next() end
+    local step = FP.procedures["LibAccountSyncProbe/check"].steps[i]
+    if step.wait then waits = waits + 1; S.Poll() elseif step.run then S.Run() else S.Next() end
 end
+eq(waits, 4, "each results step is a wait step")
 S.Next()                                           -- the other account's /reload
 for i = 2, nSteps - 2 do
     local r = rec.results[i]
@@ -224,6 +228,30 @@ for i = 2, nSteps - 2 do
     end
 end
 eq(rec.at, nSteps, "the procedure waits at its /reload step")
+
+-- 8b. A results step waits while ChatThrottleLib holds the send, goes on by
+-- itself once the result is back, and fails when it never comes (#25).
+WoW.ctlDefer = true
+T.Probe:StartSteps("check")
+rec = FP.db.steps.records["LibAccountSyncProbe/check"]
+S.Next()                                           -- 2 runs on arrival
+S.Run()                                            -- 3: send, held
+S.Poll()
+eq(rec.at, 4, "the results step waits while the send is held")
+WoW.ctlDrain()
+S.Poll()
+eq(rec.at, 5, "it goes on by itself once the result is back")
+eq(rec.results[4] and rec.results[4].check, "PASS", "and passes: " .. tostring(rec.results[4] and rec.results[4].checkDetail))
+S.Run()                                            -- 5: SendTo, held
+WoW.advance(121)
+S.Poll()
+eq(rec.results[6] and rec.results[6].status, "timeout", "a result that never comes times the step out")
+eq(rec.results[6] and rec.results[6].check, "FAIL", "  as a FAIL")
+check(tostring(rec.results[6] and rec.results[6].detail):find("1 still on the way", 1, true),
+      "  saying what was pending: " .. tostring(rec.results[6] and rec.results[6].detail))
+S.Stop()
+WoW.ctlDrain()
+WoW.ctlDefer = false
 
 -- 9. The check procedure fails where a release would: no peer.
 WoW.bn.accounts[3].isOnline = false
@@ -234,7 +262,8 @@ S.Next()
 eq(rec.results[2] and rec.results[2].check, "FAIL", "the state check fails with no peer")
 S.Run()
 eq(rec.results[3] and rec.results[3].check, "FAIL", "the send check fails with no peer")
-S.Run()
+S.Poll()
+eq(rec.at, 5, "a round that sent nothing waits for nothing")
 eq(rec.results[4] and rec.results[4].check, "FAIL", "the results check fails with nothing sent")
 S.Stop()
 WoW.bn.accounts[3].isOnline = true
@@ -279,7 +308,7 @@ B:setBlank(true)
 S.Run()
 eq(outcome(5), "PASS", "SendTo reaches the pinned account while blank: " .. detail(5))
 check(logHas("sendto \"Karuzo\" \"Player-1-0000000B\""), "  the pinned account, not the first peer")
-S.Run()
+S.Poll()
 eq(outcome(6), "PASS", "its result came back: " .. detail(6))
 S.Stop()
 B:setBlank(false)

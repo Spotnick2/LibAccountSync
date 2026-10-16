@@ -268,7 +268,9 @@ local M = {
     { "probe: 7.3 sends without checking blank", { { "return blankAtSend and round.count == 1", "return round.count == 1" } }, PROBE },
     { "probe: a round never says complete", { { "    if back >= r.expected then", "    if false then" } }, PROBE },
     { "probe: a round says complete one early", { { "    if back >= r.expected then", "    if back + 1 >= r.expected then" } }, PROBE },
-    { "probe: an early tally hides what's pending", { { "    if pending > 0 then", "    if false then" } }, PROBE },
+    { "probe: an early tally hides what's pending", { { "    if Pending() > 0 then\n        t = t", "    if false then\n        t = t" } }, PROBE },
+    { "probe: a results step doesn't wait", { { "                 if Pending() > 0 then return false, Tally() end\n", "" } }, PROBE },
+    { "probe: a results step never times out", { { "             timeout = RESULTS_TIMEOUT,\n", "" } }, PROBE },
     { "probe: a send to nobody waits", { { "    if r.expected == 0 then r.done = true; return end\n", "" } }, PROBE },
 
     -- The log reader (test_wirelog)

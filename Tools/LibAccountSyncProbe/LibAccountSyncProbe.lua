@@ -427,36 +427,43 @@ local function Minor()
     return minor
 end
 
--- The tally, and what is still on the way: a step read too early says so.
+-- Results the round still waits for (none when its send went nowhere).
+local function Pending()
+    return math.max(0, (round.expected or 0) - round.sent - round.failed)
+end
+
+-- The tally, and what is still on the way.
 local function Tally()
     local t = ("%d sent, %d failed %s"):format(round.sent, round.failed, table.concat(round.reasons, ","))
-    local pending = (round.expected or 0) - round.sent - round.failed
-    if pending > 0 then
-        t = t .. ("; %d still on the way after %.0f s (%d bytes take about %d s): wait for \"round complete\", "
-            .. "then Back and Read results"):format(pending, (debugprofilestop() - round.t0) / 1000, round.bytes,
-            Seconds(round.bytes))
+    if Pending() > 0 then
+        t = t .. ("; %d still on the way after %.0f s (%d bytes take about %d s)"):format(Pending(),
+            (debugprofilestop() - round.t0) / 1000, round.bytes, Seconds(round.bytes))
     end
     return t
 end
 
--- The results come back through ChatThrottleLib at its own pace, so they're
--- read a step later, once the console says the round is complete. A step
--- can't wait by itself yet (ForeverProbe#14).
+-- The results come back through ChatThrottleLib at its own pace (a 1000-byte
+-- send took 14 s just after login, #25), so the step waits for them: a
+-- ForeverProbe wait step (ForeverProbe#14), polled about once a second.
+local RESULTS_TIMEOUT = 120
 local function ResultsStep(text, expected)
-    return { text = text .. " Wait until the console (/fp) shows \"round complete\", then press Read results. "
-                    .. "If the check says some are still on the way, press Back, wait, and Read results again.",
-             button = "Read results",
-             run = function() Log("results: " .. Tally()); return Tally() end,
+    return { text = text .. " This step goes on by itself once every result is back.",
+             wait = function()
+                 if Pending() > 0 then return false, Tally() end
+                 Log("results: " .. Tally())
+                 return true, Tally()
+             end,
+             timeout = RESULTS_TIMEOUT,
              check = function() return round.sent == expected and round.failed == 0, Tally() end }
 end
 
 local steadyText = "Log a character in on your other WoW account (this machine or another) with this probe "
     .. "deployed there too, the same build of it. Once both are in the world, wait a minute for the "
-    .. "friends list to settle (sends are slower just after login), open the console with /fp, then press Next."
+    .. "friends list to settle (sends are slower just after login), then press Next."
 
 Probe:Steps("check", {
     title = "LibAccountSync: a release across two own accounts",
-    rev = 2,
+    rev = 3,
     { text = steadyText },
     { text = "Reading the library's state: the release loaded, and the other account as a peer. "
           .. "If the check fails, wait 30 s, press Back, then Next.", auto = true,
@@ -523,7 +530,7 @@ local blankAtSend
 
 Probe:Steps("blank", {
     title = "PLAN 7.3: the handshake with a blank presence",
-    rev = 2,
+    rev = 3,
     { text = steadyText },
     { text = "Pinning the other account: its character and its Battle.net id here, while it is named.",
       button = "Pin", run = function()

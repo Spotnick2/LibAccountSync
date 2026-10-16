@@ -94,7 +94,7 @@ eq(#chat, 0, "no line went to chat: " .. tostring(chat[1]))
 check(logHas("send 500 bytes -> 1 nil"), "send reaches the peer")
 check(logHas("sendto \"Karuzo\""), "sendto picks the peer by name, any case")
 check(logHas("sendto: no peer \"Nobody\""), "sendto names a missing peer")
-check(logHas("kinds: 20000 bytes on Probe -> 1 nil; 500 bytes on ProbeST -> 1 nil"), "kinds sends on both tags")
+check(logHas("kinds: 4000 bytes on Probe -> 1 nil; 500 bytes on ProbeST -> 1 nil"), "kinds sends on both tags")
 check(logHas("messages: batch") and logHas("4 sends -> 1,1,1,1"), "messages sends four")
 check(logHas("ping 3 -> 0"), "ping sends on the probe's prefix")
 check(logHas("onResult send \"Karuzo\": sent nil"), "onResult lines are logged")
@@ -127,6 +127,60 @@ check(receivedOK("Probe"), "every Probe stream decodes, MACs and verifies")
 check(receivedOK("ProbeST"), "the ProbeST stream decodes, MACs and verifies")
 eq(#B:received("ProbeMsg", DB.sync), 4, "four messages reached the peer")
 check(receivedOK("ProbeMsg"), "every message decodes, MACs and verifies")
+
+-- 3b. Paced for the channel (#25): the round says when it's complete, and a
+-- tally read too early says what's still on the way.
+local function count(text)
+    local n = 0
+    for _, l in ipairs(DB.log) do if l:find(text, 1, true) then n = n + 1 end end
+    return n
+end
+WoW.ctlDefer = true
+local before = count("round complete: 4 of 4")
+las("messages")
+eq(count("round complete: 4 of 4"), before, "no round complete while the messages are queued")
+check(T.Tally():find("4 still on the way", 1, true), "an early tally names what's pending: " .. T.Tally())
+check(T.Tally():find("3500 bytes take about 8 s", 1, true), "  with the time the bytes take: " .. T.Tally())
+WoW.ctlDrain()
+WoW.ctlDefer = false
+eq(count("round complete: 4 of 4"), before + 1, "round complete once all four are back")
+check(not T.Tally():find("on the way", 1, true), "a complete tally has nothing pending: " .. T.Tally())
+before = count("round complete: 2 of 2")
+las("kinds")
+eq(count("round complete: 2 of 2"), before + 1, "a round whose results came at once is complete")
+T.Sync.SetEnabled(false)                           -- Send returns nil, "disabled": no destinations
+las("send 100")
+T.Sync.SetEnabled(true)
+T.Sync.Rescan()                                    -- switched off, the session was wiped: the peer again
+B:deliver(B:hello({ key = B.key }))
+eq(#T.Sync.Peers(), 1, "the peer is back after the switch")
+check(logHas("send 100 bytes -> nil disabled"), "a send with no destinations is logged")
+check(not logHas("round complete: 0 of 0"), "  and its round waits for nothing")
+check(not T.Tally():find("on the way", 1, true), "  with nothing pending: " .. T.Tally())
+
+-- 3c. A ready peer held by ChatThrottleLib beside one still handshaking
+-- (Codex on #26): Send returns 1 and reports the other not-ready at once.
+-- That refusal is in the tally, but the round still waits for the held one.
+local C = Peer.new({ id = 4, name = "Thirdalt", guid = "Player-1-0000000C" })
+T.Sync.Rescan()                                    -- bound by Battle.net; no hello from it, so no nonce
+eq(#T.Sync.Peers(), 2, "a second own account, bound but without a nonce")
+WoW.ctlDefer = true
+before = count("round complete: 1 of 1")
+las("send 300")
+check(logHas("send 300 bytes -> 1 nil"), "one destination is counted")
+local held = T.Round()
+eq(held.failed, 1, "the handshaking peer is reported failed at once")
+check(T.Tally():find("1 still on the way", 1, true), "the held send is still pending: " .. T.Tally())
+eq(count("round complete: 1 of 1"), before, "no round complete while it is held")
+WoW.ctlDrain()
+WoW.ctlDefer = false
+eq(count("round complete: 1 of 1"), before + 1, "round complete once the held send reports back")
+check(T.Tally():find("1 sent, 1 failed not-ready", 1, true) and not T.Tally():find("on the way", 1, true),
+      "the tally keeps the refusal, with nothing pending: " .. T.Tally())
+WoW.bn.accounts[C.id] = nil
+T.Sync.Rescan()
+WoW.advance(1)
+eq(#T.Sync.Peers(), 1, "the third account is gone again")
 
 -- 4. The verdicts: a byte changed or a length short is CORRUPTED.
 eq(T.Verdict(T.Sized(1000)), "SIZE OK 1000", "a whole SIZE payload is OK")
@@ -182,10 +236,14 @@ T.Probe:StartSteps("check")
 local rec = FP.db.steps.records["LibAccountSyncProbe/check"]
 local nSteps = #FP.procedures["LibAccountSyncProbe/check"].steps
 S.Next()                                           -- 1: the other account is in
--- 2 ran on arrival (auto); every step after it with a run is pressed.
+-- 2 ran on arrival (auto); every step after it with a run is pressed, and a
+-- wait step is polled (the host's OnUpdate does that in game).
+local waits = 0
 for i = 3, nSteps - 2 do
-    if FP.procedures["LibAccountSyncProbe/check"].steps[i].run then S.Run() else S.Next() end
+    local step = FP.procedures["LibAccountSyncProbe/check"].steps[i]
+    if step.wait then waits = waits + 1; S.Poll() elseif step.run then S.Run() else S.Next() end
 end
+eq(waits, 4, "each results step is a wait step")
 S.Next()                                           -- the other account's /reload
 for i = 2, nSteps - 2 do
     local r = rec.results[i]
@@ -194,6 +252,30 @@ for i = 2, nSteps - 2 do
     end
 end
 eq(rec.at, nSteps, "the procedure waits at its /reload step")
+
+-- 8b. A results step waits while ChatThrottleLib holds the send, goes on by
+-- itself once the result is back, and fails when it never comes (#25).
+WoW.ctlDefer = true
+T.Probe:StartSteps("check")
+rec = FP.db.steps.records["LibAccountSyncProbe/check"]
+S.Next()                                           -- 2 runs on arrival
+S.Run()                                            -- 3: send, held
+S.Poll()
+eq(rec.at, 4, "the results step waits while the send is held")
+WoW.ctlDrain()
+S.Poll()
+eq(rec.at, 5, "it goes on by itself once the result is back")
+eq(rec.results[4] and rec.results[4].check, "PASS", "and passes: " .. tostring(rec.results[4] and rec.results[4].checkDetail))
+S.Run()                                            -- 5: SendTo, held
+WoW.advance(121)
+S.Poll()
+eq(rec.results[6] and rec.results[6].status, "timeout", "a result that never comes times the step out")
+eq(rec.results[6] and rec.results[6].check, "FAIL", "  as a FAIL")
+check(tostring(rec.results[6] and rec.results[6].detail):find("1 still on the way", 1, true),
+      "  saying what was pending: " .. tostring(rec.results[6] and rec.results[6].detail))
+S.Stop()
+WoW.ctlDrain()
+WoW.ctlDefer = false
 
 -- 9. The check procedure fails where a release would: no peer.
 WoW.bn.accounts[3].isOnline = false
@@ -204,7 +286,8 @@ S.Next()
 eq(rec.results[2] and rec.results[2].check, "FAIL", "the state check fails with no peer")
 S.Run()
 eq(rec.results[3] and rec.results[3].check, "FAIL", "the send check fails with no peer")
-S.Run()
+S.Poll()
+eq(rec.at, 5, "a round that sent nothing waits for nothing")
 eq(rec.results[4] and rec.results[4].check, "FAIL", "the results check fails with nothing sent")
 S.Stop()
 WoW.bn.accounts[3].isOnline = true
@@ -249,7 +332,7 @@ B:setBlank(true)
 S.Run()
 eq(outcome(5), "PASS", "SendTo reaches the pinned account while blank: " .. detail(5))
 check(logHas("sendto \"Karuzo\" \"Player-1-0000000B\""), "  the pinned account, not the first peer")
-S.Run()
+S.Poll()
 eq(outcome(6), "PASS", "its result came back: " .. detail(6))
 S.Stop()
 B:setBlank(false)

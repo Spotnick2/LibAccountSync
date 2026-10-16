@@ -95,15 +95,47 @@ end
 -- Sending, and what came back
 --------------------------------------------------------------------------------
 
+-- ChatThrottleLib's measured rate (#1, PLAN 7.5): about 570 B/s, slower
+-- just after login; frame headers and escaping add about a quarter (#25).
+local BYTES_PER_SECOND = 570
+local function Seconds(bytes) return math.ceil(bytes * 1.25 / BYTES_PER_SECOND) end
+
 -- The latest round, for a procedure's check: what the send call returned
--- (count, why) and the onResult tally.
-local round = { sent = 0, failed = 0, reasons = {} }
-local function NewRound()
-    round = { sent = 0, failed = 0, reasons = {} }
+-- (count, why), how many results it waits for, and the onResult tally.
+local round = { sent = 0, failed = 0, refused = 0, reasons = {}, bytes = 0, t0 = 0 }
+local function NewRound(bytes)
     lastSendAt = debugprofilestop()
+    round = { sent = 0, failed = 0, refused = 0, reasons = {}, bytes = bytes or 0, t0 = lastSendAt }
 end
+
+-- Results back for the round's destinations. A peer whose nonce we don't
+-- hold yet is reported failed/not-ready before Send returns, and isn't one
+-- of the destinations Send counts: it's in the tally, never in this (Codex
+-- on #26).
+local function Answered(r) return r.sent + r.failed - r.refused end
+
+-- "round complete" in the console once every result the round waits for is
+-- in: what a results step waits for (#25).
+local function Progress(r)
+    if not r.expected or r.done then return end
+    local back = Answered(r)
+    if r.expected == 0 then r.done = true; return end
+    if back >= r.expected then
+        r.done = true
+        Log(("round complete: %d of %d results back after %.1f s"):format(back, r.expected,
+            (debugprofilestop() - r.t0) / 1000))
+    end
+end
+
+-- The send's destinations: the results the round waits for.
+local function Expect(n)
+    round.expected = n or 0
+    Progress(round)
+end
+
 local function Returned(count, why)
     round.count, round.why = count, why
+    Expect(count)
     return count, why
 end
 
@@ -115,9 +147,11 @@ local function OnResult(label)
         if status == "sent" then r.sent = r.sent + 1 else
             r.failed = r.failed + 1
             r.reasons[#r.reasons + 1] = tostring(reason)
+            if reason == "not-ready" and r.expected == nil then r.refused = r.refused + 1 end
         end
         Log(("  onResult %s %s: %s %s after %.0f ms"):format(label, V(sender.name), status, tostring(reason),
             debugprofilestop() - t0))
+        Progress(r)
     end
 end
 
@@ -132,7 +166,7 @@ end
 local function Send(n)
     n = math.min(tonumber(n) or 1000, 32768)
     local payload = Sized(n)
-    NewRound()
+    NewRound(#payload)
     local count, why = Sync.Send(payload, OnResult("send"))
     Log(("send %d bytes -> %s %s"):format(#payload, tostring(count), tostring(why)))
     return Returned(count, why)
@@ -156,33 +190,37 @@ local function SendTo(what, n, guid)
         return nil, "no-SendTo"
     end
     local payload = Sized(n or 1000)
-    NewRound()
+    NewRound(#payload)
     local count, why = Sync.SendTo(p.guid, payload, OnResult("sendto"))
     Log(("sendto %s %s, %d bytes -> %s %s"):format(V(p.name), V(p.guid), #payload, tostring(count), tostring(why)))
     return Returned(count, why)
 end
 
--- Two snapshot kinds of one addon (r5, #17): a large one on tag Probe, then
+-- Two snapshot kinds of one addon (r5, #17): a larger one on tag Probe, then
 -- at once a small one on tag ProbeST, on the same store. Both must arrive.
+-- Sized for the channel: about 10 s at the measured rate (#25).
+local KIND_SIZES = { 4000, 500 }
 local function SendKinds()
-    NewRound()
-    local a, whyA = Sync.Send(Padded("KIND|20000|Probe|", 20000), OnResult("kind Probe"))
-    local b, whyB = Kinds.Send(Padded("KIND|500|ProbeST|", 500), OnResult("kind ProbeST"))
-    Log(("kinds: 20000 bytes on Probe -> %s %s; 500 bytes on ProbeST -> %s %s"):format(
-        tostring(a), tostring(whyA), tostring(b), tostring(whyB)))
+    NewRound(KIND_SIZES[1] + KIND_SIZES[2])
+    local a, whyA = Sync.Send(Padded(("KIND|%d|Probe|"):format(KIND_SIZES[1]), KIND_SIZES[1]), OnResult("kind Probe"))
+    local b, whyB = Kinds.Send(Padded(("KIND|%d|ProbeST|"):format(KIND_SIZES[2]), KIND_SIZES[2]), OnResult("kind ProbeST"))
+    Log(("kinds: %d bytes on Probe -> %s %s; %d bytes on ProbeST -> %s %s"):format(
+        KIND_SIZES[1], tostring(a), tostring(whyA), KIND_SIZES[2], tostring(b), tostring(whyB)))
     round.kinds = { a, b }
+    Expect((a or 0) + (b or 0))
     return a, b
 end
 
 -- Four messages on the messages tag (r5, #18), back to back and largest
 -- first, so the small ones may complete first. Every one must be delivered,
 -- once. On a copy without messages mode the tag gets snapshots, said here.
-local MESSAGE_SIZES = { 6000, 3000, 1000, 200 }
+local MESSAGE_SIZES = { 2000, 1000, 400, 100 }   -- about 8 s at the measured rate (#25)
+local MESSAGE_BYTES = 3500
 local function SendMessages()
     if Msgs.messages ~= true then
         Log("messages: this copy gives ProbeMsg snapshots, not messages (r5 or newer needed)")
     end
-    NewRound()
+    NewRound(MESSAGE_BYTES)
     local batch, counts = time(), {}
     for i, n in ipairs(MESSAGE_SIZES) do
         local head = ("MSG|%d|%d|%d|%d|"):format(n, batch, i, #MESSAGE_SIZES)
@@ -190,12 +228,17 @@ local function SendMessages()
     end
     Log(("messages: batch %d, %d sends -> %s"):format(batch, #MESSAGE_SIZES, table.concat(counts, ",")))
     round.counts = counts
+    local n = 0
+    for _, c in ipairs(counts) do n = n + c end
+    Expect(n)
     return batch, table.concat(counts, ",")
 end
 
 local function Bytes()
-    NewRound()
-    Log(("bytes: all 256 values twice -> %s"):format(tostring((Sync.Send(AllBytes(), OnResult("bytes"))))))
+    NewRound(#AllBytes())
+    local count = Sync.Send(AllBytes(), OnResult("bytes"))
+    Log(("bytes: all 256 values twice -> %s"):format(tostring(count)))
+    Expect(count)
 end
 
 --------------------------------------------------------------------------------
@@ -391,36 +434,55 @@ local function Minor()
     return minor
 end
 
-local function Tally()
-    return ("%d sent, %d failed %s"):format(round.sent, round.failed, table.concat(round.reasons, ","))
+-- Results the round still waits for (none when its send went nowhere).
+local function Pending()
+    return math.max(0, (round.expected or 0) - Answered(round))
 end
 
--- The results come back through ChatThrottleLib, so they're read a step later.
+-- The tally, and what is still on the way.
+local function Tally()
+    local t = ("%d sent, %d failed %s"):format(round.sent, round.failed, table.concat(round.reasons, ","))
+    if Pending() > 0 then
+        t = t .. ("; %d still on the way after %.0f s (%d bytes take about %d s)"):format(Pending(),
+            (debugprofilestop() - round.t0) / 1000, round.bytes, Seconds(round.bytes))
+    end
+    return t
+end
+
+-- The results come back through ChatThrottleLib at its own pace (a 1000-byte
+-- send took 14 s just after login, #25), so the step waits for them: a
+-- ForeverProbe wait step (ForeverProbe#14), polled about once a second.
+local RESULTS_TIMEOUT = 120
 local function ResultsStep(text, expected)
-    return { text = text .. " Give the sends a few seconds to finish (more for a large one); if the "
-                    .. "check is short, press Back and Read results again.", button = "Read results",
-             run = function() Log("results: " .. Tally()); return Tally() end,
+    return { text = text .. " This step goes on by itself once every result is back.",
+             wait = function()
+                 if Pending() > 0 then return false, Tally() end
+                 Log("results: " .. Tally())
+                 return true, Tally()
+             end,
+             timeout = RESULTS_TIMEOUT,
              check = function() return round.sent == expected and round.failed == 0, Tally() end }
 end
 
 local steadyText = "Log a character in on your other WoW account (this machine or another) with this probe "
     .. "deployed there too, the same build of it. Once both are in the world, wait a minute for the "
-    .. "friends list to settle, then press Next."
+    .. "friends list to settle (sends are slower just after login), then press Next."
 
 Probe:Steps("check", {
     title = "LibAccountSync: a release across two own accounts",
-    rev = 1,
+    rev = 3,
     { text = steadyText },
     { text = "Reading the library's state: the release loaded, and the other account as a peer. "
           .. "If the check fails, wait 30 s, press Back, then Next.", auto = true,
       run = function() Status(); return Minor(), #Sync.Peers() end,
       check = function() return #Sync.Peers() >= 1 and (Minor() or 0) >= 5, "r" .. tostring(Minor()),
                                 #Sync.Peers() .. " peer(s)" end },
-    { text = "A 1000-byte payload to every own account.", button = "Send",
+    { text = ("A 1000-byte payload to every own account: about %d s."):format(Seconds(1000)), button = "Send",
       run = function() return Send(1000) end,
       check = function() return round.count == 1 and round.failed == 0, tostring(round.count), tostring(round.why) end },
     ResultsStep("Reading what ChatThrottleLib reported for that send.", 1),
-    { text = "SendTo (r4): the same to the other account alone.", button = "SendTo",
+    { text = ("SendTo (r4): the same to the other account alone, about %d s."):format(Seconds(1000)),
+      button = "SendTo",
       run = function() return SendTo(nil, 1000) end,
       check = function() return round.count == 1 and round.failed == 0, tostring(round.count), tostring(round.why) end },
     ResultsStep("Reading what came back for the SendTo.", 1),
@@ -430,16 +492,18 @@ Probe:Steps("check", {
           return round.count == nil and round.why == "no-peers" and round.sent + round.failed == 0,
                  tostring(round.count), tostring(round.why)
       end },
-    { text = "Two snapshot kinds (r5, #17): 20000 bytes on tag Probe, then at once 500 on ProbeST. "
-          .. "The other account must get both.", button = "Send kinds",
+    { text = ("Two snapshot kinds (r5, #17): %d bytes on tag Probe, then at once %d on ProbeST, about %d s. "
+          .. "The other account must get both."):format(KIND_SIZES[1], KIND_SIZES[2],
+          Seconds(KIND_SIZES[1] + KIND_SIZES[2])), button = "Send kinds",
       run = function() return SendKinds() end,
       check = function()
           local k = round.kinds or {}
           return k[1] == 1 and k[2] == 1 and round.failed == 0, tostring(k[1]), tostring(k[2])
       end },
     ResultsStep("Reading what came back for the two kinds.", 2),
-    { text = "Messages (r5, #18): four on tag ProbeMsg, back to back, largest first. "
-          .. "The other account must get all four, once each.", button = "Send messages",
+    { text = ("Messages (r5, #18): four on tag ProbeMsg, back to back, largest first, about %d s. "
+          .. "The other account must get all four, once each."):format(Seconds(MESSAGE_BYTES)),
+      button = "Send messages",
       run = function() return SendMessages() end,
       check = function()
           local all = true
@@ -448,7 +512,8 @@ Probe:Steps("check", {
                  table.concat(round.counts or {}, ",")
       end },
     ResultsStep("Reading what came back for the messages.", #MESSAGE_SIZES),
-    { text = "On the OTHER account, type /reload, so what it received is on disk. Then press Next here." },
+    { text = "On the OTHER account, check its console (/fp) shows the four messages received (\"4 distinct "
+          .. "so far\"), then type /reload there, so what it received is on disk. Then press Next here." },
     { text = "Now /reload here too, to save this side.", reload = true },
 })
 
@@ -472,7 +537,7 @@ local blankAtSend
 
 Probe:Steps("blank", {
     title = "PLAN 7.3: the handshake with a blank presence",
-    rev = 2,
+    rev = 3,
     { text = steadyText },
     { text = "Pinning the other account: its character and its Battle.net id here, while it is named.",
       button = "Pin", run = function()
@@ -591,4 +656,4 @@ Msgs.OnMessage(OnMessageFor("ProbeMsg"))
 
 NS._test = { Probe = Probe, Sync = Sync, Kinds = Kinds, Msgs = Msgs, Verdict = Verdict, Padded = Padded,
              Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end,
-             Round = function() return round end }
+             Round = function() return round end, Tally = function() return Tally() end }

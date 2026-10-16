@@ -148,8 +148,15 @@ check(not T.Tally():find("on the way", 1, true), "a complete tally has nothing p
 before = count("round complete: 2 of 2")
 las("kinds")
 eq(count("round complete: 2 of 2"), before + 1, "a round whose results came at once is complete")
-las("sendto Nobody")
-check(not logHas("round complete: 0 of 0"), "a send to nobody waits for nothing")
+T.Sync.SetEnabled(false)                           -- Send returns nil, "disabled": no destinations
+las("send 100")
+T.Sync.SetEnabled(true)
+T.Sync.Rescan()                                    -- switched off, the session was wiped: the peer again
+B:deliver(B:hello({ key = B.key }))
+eq(#T.Sync.Peers(), 1, "the peer is back after the switch")
+check(logHas("send 100 bytes -> nil disabled"), "a send with no destinations is logged")
+check(not logHas("round complete: 0 of 0"), "  and its round waits for nothing")
+check(not T.Tally():find("on the way", 1, true), "  with nothing pending: " .. T.Tally())
 
 -- 4. The verdicts: a byte changed or a length short is CORRUPTED.
 eq(T.Verdict(T.Sized(1000)), "SIZE OK 1000", "a whole SIZE payload is OK")

@@ -94,7 +94,7 @@ eq(#chat, 0, "no line went to chat: " .. tostring(chat[1]))
 check(logHas("send 500 bytes -> 1 nil"), "send reaches the peer")
 check(logHas("sendto \"Karuzo\""), "sendto picks the peer by name, any case")
 check(logHas("sendto: no peer \"Nobody\""), "sendto names a missing peer")
-check(logHas("kinds: 20000 bytes on Probe -> 1 nil; 500 bytes on ProbeST -> 1 nil"), "kinds sends on both tags")
+check(logHas("kinds: 4000 bytes on Probe -> 1 nil; 500 bytes on ProbeST -> 1 nil"), "kinds sends on both tags")
 check(logHas("messages: batch") and logHas("4 sends -> 1,1,1,1"), "messages sends four")
 check(logHas("ping 3 -> 0"), "ping sends on the probe's prefix")
 check(logHas("onResult send \"Karuzo\": sent nil"), "onResult lines are logged")
@@ -127,6 +127,29 @@ check(receivedOK("Probe"), "every Probe stream decodes, MACs and verifies")
 check(receivedOK("ProbeST"), "the ProbeST stream decodes, MACs and verifies")
 eq(#B:received("ProbeMsg", DB.sync), 4, "four messages reached the peer")
 check(receivedOK("ProbeMsg"), "every message decodes, MACs and verifies")
+
+-- 3b. Paced for the channel (#25): the round says when it's complete, and a
+-- tally read too early says what's still on the way.
+local function count(text)
+    local n = 0
+    for _, l in ipairs(DB.log) do if l:find(text, 1, true) then n = n + 1 end end
+    return n
+end
+WoW.ctlDefer = true
+local before = count("round complete: 4 of 4")
+las("messages")
+eq(count("round complete: 4 of 4"), before, "no round complete while the messages are queued")
+check(T.Tally():find("4 still on the way", 1, true), "an early tally names what's pending: " .. T.Tally())
+check(T.Tally():find("3500 bytes take about 8 s", 1, true), "  with the time the bytes take: " .. T.Tally())
+WoW.ctlDrain()
+WoW.ctlDefer = false
+eq(count("round complete: 4 of 4"), before + 1, "round complete once all four are back")
+check(not T.Tally():find("on the way", 1, true), "a complete tally has nothing pending: " .. T.Tally())
+before = count("round complete: 2 of 2")
+las("kinds")
+eq(count("round complete: 2 of 2"), before + 1, "a round whose results came at once is complete")
+las("sendto Nobody")
+check(not logHas("round complete: 0 of 0"), "a send to nobody waits for nothing")
 
 -- 4. The verdicts: a byte changed or a length short is CORRUPTED.
 eq(T.Verdict(T.Sized(1000)), "SIZE OK 1000", "a whole SIZE payload is OK")

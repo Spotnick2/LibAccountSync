@@ -856,7 +856,8 @@ AltStable's database reply overtaken by its own request or ping (#18, AltStable#
   a new message arriving before any timer fires; mutation red.
 - Merged as `76fedef` and tagged `r5` there. GlassChat (#17, two tags) and AltStable's migration
   (#18, messages mode) are its first consumers.
-- In game on 2026-10-16, build 1.60.1.70425, two own accounts, `/fp steps las check` (#25): all
+- In game on 2026-10-16, build 1.60.1.70425 (its documented surface is identical to 70450's), two
+  own accounts, `/fp steps las check` (#25): all
   checks passed, and the receiver verified every payload byte for byte.
   - r4: Send and `SendTo` (1000 B each) delivered once; `SendTo` to a GUID that isn't a peer is
     `nil, "no-peers"` with nothing sent.

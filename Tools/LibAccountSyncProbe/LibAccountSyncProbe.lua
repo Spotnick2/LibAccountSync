@@ -537,7 +537,7 @@ local blankAtSend
 
 Probe:Steps("blank", {
     title = "PLAN 7.3: the handshake with a blank presence",
-    rev = 3,
+    rev = 4,
     { text = steadyText },
     { text = "Pinning the other account: its character and its Battle.net id here, while it is named.",
       button = "Pin", run = function()
@@ -551,11 +551,15 @@ Probe:Steps("blank", {
           return target and target.id, #peers
       end,
       check = function() return target ~= nil, target and target.id end },
-    { text = "On the OTHER account, type /reload. As soon as its loading screen is gone, press Read ids here. "
-          .. "If its presence isn't blank, press Back, then Next, and try again: it is rare.", button = "Read ids",
+    -- A /reload keeps the presence (twice, #9): it takes a logout. At the
+    -- character list its addons aren't running, so what counts is the moment
+    -- just after it logs back in, before its presence fills in.
+    { text = "On the OTHER account, log out to the character list, then log the same character back in. "
+          .. "The moment its loading screen ends, press Read ids here. If its presence isn't blank, "
+          .. "press Back, then Next, and try again: it is rare.", button = "Read ids",
       run = function() Ids(); return TargetBlank() end,
       check = function() return TargetBlank() end },
-    { text = "Reading the library's state: the pinned account must be a peer proven by key or proof, "
+    { text = "Press Read state right away: the pinned account must be a peer proven by key or proof, "
           .. "not by Battle.net, while its presence is still blank.", button = "Read state",
       run = function() Status(); local p = TargetPeer(); return p and p.proven, TargetBlank() end,
       check = function()

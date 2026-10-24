@@ -10,11 +10,11 @@
     /reload (ForeverProbe docs/GUIDE.md section 7).
 
         pwsh Tools/deploy-probe.ps1
-        pwsh Tools/deploy-probe.ps1 -AddOnsPath "D:\...\_classic_beta_\Interface\AddOns"
+        pwsh Tools/deploy-probe.ps1 -AddOnsPath "D:\...\_forever_\Interface\AddOns"
 #>
 
 param(
-    [string]$AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns"
+    [string]$AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns"
 )
 
 $ErrorActionPreference = "Stop"

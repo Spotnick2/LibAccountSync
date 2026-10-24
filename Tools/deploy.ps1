@@ -10,12 +10,12 @@
 
     Consumers call it from their own deploy:
         pwsh ..\LibAccountSync\Tools\deploy.ps1 -Addon GlassChat
-        pwsh ..\LibAccountSync\Tools\deploy.ps1 -Addon GlassChat -AddOnsPath "D:\...\_classic_beta_\Interface\AddOns"
+        pwsh ..\LibAccountSync\Tools\deploy.ps1 -Addon GlassChat -AddOnsPath "D:\...\_forever_\Interface\AddOns"
 #>
 
 param(
     [Parameter(Mandatory)][string]$Addon,
-    [string]$AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns",
+    [string]$AddOnsPath = "C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns",
     [string]$Lua = "C:\Program Files (x86)\Lua\5.1\lua.exe"
 )
 

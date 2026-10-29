@@ -16,7 +16,7 @@ Two other ways to get the channel were ruled out:
 - Copying the code into GlassChat would leave two drifting copies of an ownership proof.
 
 So the channel becomes an embedded LibStub library, following
-`C:\Projects\WoW\References\EMBEDDED-LIBRARIES.md`.
+`C:\Projects\WoW\References\Docs\EMBEDDED-LIBRARIES.md`.
 
 - **GlassChat is the pilot.** It sends a whole snapshot that the receiver applies wholesale,
   removals included (GlassChat `docs/PLAN-SPAM.md` S3). The snapshot also carries the "own

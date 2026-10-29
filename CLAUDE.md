@@ -4,6 +4,11 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
+**MINOR 6 is on `main`, not yet tagged** (#31, the 2026-10-29 audit: the shared stream and byte
+caps make room for Battle.net-verified senders, the own-name check is gone, the friends list is
+walked lazily, the payload hash is cached; PLAN §10 "MINOR 6"). Desk-verified only: `r6` is tagged
+after the two-account check on 2026-11-04, the first day with game access, together with the §7.9
+relay gate and the new §7.11 handle-reuse measurement.
 **Status: `r5` released** (tag on `76fedef`, MINOR 5: #18 `messages = true` delivery for
 independent messages, #17 one tag per snapshot kind on a shared store, the stream cap per
 (sender, tag); Codex-reviewed). r5 and `r4` (`830017a`, #14 `SendTo`) passed the two-account
@@ -96,12 +101,15 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
   (bound to our nonce and the proven GUID); sids are monotonic per (tag, sender GUID) for a
   snapshot tag, and delivered at most once per (tag, sender GUID) for a messages tag (a 256-sid
   window, older refused).
+- The total stream cap and the byte cap are shared by every sender. Only a sender Battle.net
+  verified at admission makes room, and only by evicting streams of senders not verified at
+  admission (MINOR 6, #31). A sender's own per-(sender, tag) cap never evicts anyone else's.
 
 ## Testing
 
 ```
 pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua
-& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (~1 min)
+& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 140)
 ```
 - Plain Lua 5.1 (`C:\Program Files (x86)\Lua\5.1\`), LibGlass's harness: strict globals (each
   stub confirmed in the API dump), loading through the XML with `(host, ns)`, secrets as

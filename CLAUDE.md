@@ -25,7 +25,7 @@ adversarial review first.
 
 - `docs/PLAN.md`: the design, every decision and why, and the review log. Section numbers (§n)
   in the code refer to it.
-- `C:\Projects\WoW\References\EMBEDDED-LIBRARIES.md`: how an embedded library is built, versioned,
+- `C:\Projects\WoW\References\Docs\EMBEDDED-LIBRARIES.md`: how an embedded library is built, versioned,
   upgraded in place, packaged and tested here.
 - `C:\Projects\WoW\AltStable\docs\SYNC-DISCOVERY.md`: the design this library starts from, with
   measured behaviour and three adversarial review rounds. Its closed routes stay closed.
@@ -33,8 +33,8 @@ adversarial review first.
   in its own session.
 - `C:\Projects\WoW\LibGlass` (one runtime file, instances, upgrade tests) and
   `C:\Projects\WoW\LibGroupBuffs` (consumers, version fixtures): the templates.
-- `C:\Projects\WoW\References\PORTING-TBC-TO-FOREVER.md` and
-  `C:\Projects\WoW\References\forever-api-1.60.1.70450.md`: client facts and the API dump. From
+- `C:\Projects\WoW\References\Docs\PORTING-TBC-TO-FOREVER.md` and
+  `C:\Projects\WoW\References\Forever\api\forever-api-1.60.1.70450.md`: client facts and the API dump. From
   70235 to 70450 the documented changes are voice chat, Discord, mail transfer, LFG and stat
   functions, plus two new `C_BattleNet` functions; nothing this library, its probe or its stubs
   use changed (#27).
@@ -48,7 +48,7 @@ adversarial review first.
 - **`Tools\deploy.ps1`**: copies this checkout into `AddOns\<Addon>\Libs\LibAccountSync-1.0`.
   **`Tools\LibAccountSyncProbe\`**, `Tools\deploy-probe.ps1`, `Tools\read-wirelog.py`: the
   in-game probe and its log reader. Never shipped. A ForeverProbe module (`/fp las <command>`,
-  `C:\Projects\WoW\References\PROBES.md`); the deploy installs `..\ForeverProbe` first. Each
+  `C:\Projects\WoW\References\Docs\PROBES.md`); the deploy installs `..\ForeverProbe` first. Each
   release's two-account check is `/fp steps las check`; PLAN §7.3 and §7.9 are `blank` and `relay`.
   After the owner's `/reload` on both accounts, read the results yourself: `read-wirelog.py` (every
   account's log) and `ForeverProbe.lua`'s `steps.records`.

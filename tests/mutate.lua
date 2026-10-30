@@ -37,7 +37,9 @@ local M = {
     { "the key goes to any id", { { 'local key = I.OwnAccountGame(id, me) and K or ""', 'local key = K' } } },
     { "a key or proof is believed from any id", { { "elseif hinted or S.myNonce[id] then", "elseif true then" } } },
     { "anyone's nonce is kept", { { "if fresh and (g or hinted or S.learned[id]) then", "if fresh then" } } },
-    { "our own name is accepted", { { "if Short(name) == Short(PlayerName()) then return end", "" } } },
+    { "our own echo is accepted", { { 'if guid ~= "" and guid == PlayerGuid() then return end        -- our own echo', "" } } },
+    { "every hello walks the friends list", { { "local hinted = not g and I.OwnByElimination(id, me)",
+                                                "local hinted = not g and I.OwnByElimination(id, me, I.FriendGameIDs())" } } },
     { "a reflected nonce is accepted", { { "if nonce == S.myNonce[id] then return end                     -- reflection", "" } } },
     { "a hello to every peer every scan", { { "if not known[id] or not S.theirNonce[id] then I.SendHello(id) end",
                                               "I.SendHello(id)" } } },
@@ -102,7 +104,7 @@ local M = {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
           '    if second ~= nil and second ~= "" then' } } },
     { "MINOR not raised over the pilot copy", {
-        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 5', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 6', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
     -- (No "MINOR left at 2" mutation: that is what test_upgrade 4d's freeze
     -- guard catches in a normal run, since r2's manifest no longer matches,
     -- and that guard is off here because every mutant differs from r2.)
@@ -180,8 +182,15 @@ local M = {
     -- Framing and caps (§2, §5.2)
     { "the data body is split on |", { { '|([^|]*)|([^|]*)|(.*)$")', '|([^|]*)|([^|]*)|([^|]*)")' } } },
     { "no chunk cap", { { "if i < 1 or i > n or n > MAX_CHUNKS then return end", "if i < 1 or i > n then return end" } } },
-    { "no per-sender stream cap", { { "if perId >= cap or total >= STREAMS_TOTAL then",
-                                      "if total >= STREAMS_TOTAL then" } } },
+    { "no per-sender stream cap", { { "if perId >= cap then S.refused[key] = time(); return end", "" } } },
+    -- The shared caps and verified senders (#31)
+    { "a verified sender never evicts at the slot cap", {
+        { "if total >= STREAMS_TOTAL and verified then total = total - I.EvictUnverified(1, 0) end", "" } } },
+    { "a verified sender never evicts at the byte cap", {
+        { "if bytes + #body > BUFFER_BYTES and buf.verified then", "if false then" } } },
+    { "eviction takes verified streams too", { { "if not b.verified and (not victim", "if (not victim" } } },
+    { "the payload hash is recomputed on every check", {
+        { "buf.hash = buf.hash or SHA256(buf.payload)", "buf.hash = SHA256(buf.payload)" } } },
     { "no maxPayload on receive", { { "if not payload or #payload > inst.maxPayload then", "if not payload then" } } },
     { "an idle stream never settles", { { "local wait = buf.complete and AWAIT_HELLO or STREAM_SETTLE",
                                           "local wait = buf.complete and AWAIT_HELLO or 100000" } } },

@@ -251,6 +251,12 @@ for _, r in ipairs(RELEASED) do
     local asked = newHost(lib, "AltStable", {}, { messages = true })
     login()
     WoW.advance(61)
+    -- A blank peer's stream, sent before its hello and complete under the
+    -- old copy, waits for that hello (§5.3); the current copy must deliver
+    -- it, hashing a buffer the old copy never hashed (#31).
+    local W = Peer.new({ id = 5, name = "Blank", guid = "Player-1-00000055", blank = true })
+    inst.Rescan()
+    W:send("GlassChat", "waiting across r" .. r, { sid = "1760000000700" })
     loadLibrary("LibAccountSyncProbe")
     eq(select(2, LibStub:GetLibrary(MAJOR)), math.max(r, MINOR), "  the newer of r" .. r .. " and the current copy wins")
     eq(lib.ready, math.max(r, MINOR), "  complete")
@@ -266,6 +272,7 @@ for _, r in ipairs(RELEASED) do
     eq(inst.Peers()[1] and inst.Peers()[1].proven, "bnet", "  r" .. r .. "'s instance pairs")
     B:send("GlassChat", "after loading over r" .. r)
     eq(box[1] and box[1].payload, "after loading over r" .. r, "  and receives")
+    local wHello = W:hello()                 -- its proof answers our hello, cleared from WoW.sent below
     WoW.sent = {}
     eq(inst.Send("x"), 1, "  and sends")
     if r < MINOR then
@@ -277,6 +284,9 @@ for _, r in ipairs(RELEASED) do
         -- instance must not claim otherwise once a newer copy runs it.
         eq(asked.messages, nil, "  r" .. r .. "'s instance asked for messages mode doesn't claim it")
     end
+    W:deliver(wHello)
+    eq(box[2] and box[2].payload, "waiting across r" .. r,
+       "  a stream waiting under r" .. r .. " for its hello is delivered by the current copy")
 end
 
 -- 5. The completion marker is the last line, and MINOR is written once.

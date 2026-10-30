@@ -766,4 +766,142 @@ do
     eq(store.lastSid, tonumber(b[1] and b[1].sid), "  kept in the one store")
 end
 
+-- 22. The shared caps and Battle.net-verified senders (audit 2026-10-29,
+--     #31). A hinted blank id holds our nonce, so its frames are admitted;
+--     with streams that never finish it could fill the byte budget or every
+--     stream slot and starve the household. A sender verified at admission
+--     now evicts such streams (least recently active first); nothing else
+--     evicts across senders.
+local function hinted(lib, inst, id)
+    local H = Peer.new({ id = id or 5, name = "Blank", guid = "Player-1-00000055", blank = true,
+                         key = "ffffffffffffffffffffffffffffffff" })
+    inst.Rescan()
+    check(lib.state.myNonce[H.id] ~= nil, "the hinted id holds our nonce")
+    return H
+end
+-- Two never-finishing streams from `P` on `tag`: chunk 1 withheld, chunks
+-- 2-311 of 365 delivered, 211 bytes each: 130 820 of the 131 072 bytes.
+local function fill(P, tag)
+    local body = string.rep("x", 211)
+    for s = 1, 2 do
+        for i = 2, 311 do
+            P:deliver(table.concat({ "D1", tag, "176000000000" .. s, tostring(i), "365", "-", body }, "|"))
+        end
+    end
+end
+local function open(lib)
+    local n, bytes = 0, 0
+    for _, b in pairs(lib.state.buffers) do n, bytes = n + 1, bytes + b.bytes end
+    return n, bytes
+end
+do
+    -- 22a. The byte budget: the verified peer's first chunk still fits; its
+    --      second evicts the least recently active hinted stream and the
+    --      snapshot lands. The evicted stream is refused.
+    local lib, inst, store, B = verified()
+    local box = inbox(inst)
+    local H = hinted(lib, inst)
+    fill(H, "GlassChat")
+    local n, bytes = open(lib)
+    eq(n, 2, "the hinted id holds two streams")
+    check(bytes > 131072 - 1000, "  and nearly the whole byte budget (" .. bytes .. ")")
+    B:send("GlassChat", string.rep("A", 2000), { sid = "1760000000050" })
+    eq(#box, 1, "a verified peer's 2 KB snapshot is delivered over them")
+    eq((open(lib)), 1, "  one hinted stream went for it, on a later chunk of the snapshot")
+    check(lib.state.refused["5|GlassChat|1760000000001"] ~= nil, "  the least recently active, now refused")
+    H:deliver("D1|GlassChat|1760000000001|312|365|-|y")
+    eq((open(lib)), 1, "  so a late chunk doesn't recreate it")
+    B:send("GlassChat", string.rep("B", 2000), { sid = "1760000000051" })
+    eq(#box, 2, "a second snapshot fits beside the remaining stream and is delivered")
+    eq((open(lib)), 1, "  without evicting it: eviction only under pressure")
+end
+do
+    -- 22b. The stream slots: four snapshot tags let one hinted id hold all
+    --      eight; a verified peer's message on any tag evicts one and lands.
+    local lib, inst, store, B = verified()
+    local hosts = { inst, newHost(lib, "TagB", store), newHost(lib, "TagC", store), newHost(lib, "TagD", store) }
+    local boxes = {}
+    for k, h in ipairs(hosts) do boxes[k] = inbox(h) end
+    local H = hinted(lib, inst)
+    for k, h in ipairs(hosts) do
+        for s = 1, 2 do
+            H:deliver(table.concat({ "D1", h.addon, "17600000000" .. s .. k, "2", "3", "-", "x" }, "|"))
+        end
+    end
+    eq((open(lib)), 8, "one hinted id holds every stream slot")
+    B:send("TagD", "hello", { sid = "1760000000060" })
+    eq(#boxes[4], 1, "a verified peer's message on TagD evicts one and is delivered")
+    eq((open(lib)), 7, "  one hinted stream went")
+end
+do
+    -- 22c. Only unverified streams are evicted: two verified peers at the
+    --      slot cap refuse each other as before.
+    local lib, inst, store, B = verified()
+    local hosts = { inst, newHost(lib, "TagB", store), newHost(lib, "TagC", store), newHost(lib, "TagD", store) }
+    local C = Peer.new({ id = 4, name = "Karuzo Two", guid = "Player-1-0000000C" })
+    inst.Rescan()
+    C:deliver(C:hello({ key = C.key }))
+    for k, h in ipairs(hosts) do
+        for s = 1, 2 do
+            B:deliver(table.concat({ "D1", h.addon, "17600000000" .. s .. k, "2", "3", "-", "x" }, "|"))
+        end
+    end
+    eq((open(lib)), 8, "a verified peer holds every slot")
+    local dbox = inbox(hosts[4])
+    C:send("TagD", "hello", { sid = "1760000000070" })
+    eq(#dbox, 0, "another verified peer at the cap is refused: nothing of the first's is evicted")
+    eq((open(lib)), 8, "  all eight still open")
+end
+do
+    -- 22d. Only a verified sender evicts: a hinted id against a verified
+    --      peer's full byte budget is refused, as before.
+    local lib, inst, store, B = verified()
+    local H = hinted(lib, inst)
+    fill(B, "GlassChat")
+    eq((open(lib)), 2, "the verified peer's two streams")
+    H:deliver("D1|GlassChat|1760000000080|2|3|-|" .. string.rep("z", 211))
+    H:deliver("D1|GlassChat|1760000000080|3|3|-|" .. string.rep("z", 211))
+    eq((open(lib)), 2, "a hinted id's stream over the byte cap is refused, nothing evicted")
+    check(lib.state.refused["5|GlassChat|1760000000080"] ~= nil, "  and marked refused")
+end
+do
+    -- 22e. Admission status is what counts: a blank peer proven by HMAC was
+    --      not verified by Battle.net, so a verified peer's pressure evicts
+    --      its streams too, messages included (PLAN §1: the one exception to
+    --      "a message is never evicted").
+    local lib, inst, store, B = proven()
+    local msg = newHost(lib, "AltStable", store, { messages = true })
+    fill(B, "AltStable")
+    local C = Peer.new({ id = 4, name = "Karuzo Two", guid = "Player-1-0000000C" })
+    inst.Rescan()
+    C:deliver(C:hello({ key = C.key }))
+    local box = inbox(inst)
+    C:send("GlassChat", string.rep("A", 2000), { sid = "1760000000090" })
+    eq(#box, 1, "the verified peer's snapshot is delivered")
+    eq((open(lib)), 1, "  one of the proven blank peer's message streams was evicted for it")
+end
+do
+    -- 22f. The payload hash is computed once, at the first MAC check, and
+    --      reused: a stream waiting for its sender's hello is rechecked on
+    --      every hello and settle (#31).
+    local T = LibStub("LibAccountSync-1.0")._test
+    local lib, inst = session(seasoned(), { before = function() WoW.bn.blank = true end })
+    local box = inbox(inst)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()                                        -- hinted: our hello carries our nonce
+    local payload = string.rep("h", 300)
+    B:send("GlassChat", payload, { sid = "1760000000095" })   -- MAC over our nonce, before its hello
+    local buf = lib.state.buffers["3|GlassChat|1760000000095"]
+    check(buf and buf.complete and buf.hash == nil, "the stream waits for its hello, not hashed yet")
+    buf.hash = string.rep("0", 64)
+    B:deliver(B:hello())
+    eq(#box, 0, "a recheck uses the cached hash (a wrong one here): not delivered")
+    buf.hash = nil
+    B:deliver(B:hello({ nonce = "5555555555555555" }))
+    eq(#box, 1, "with the cache cleared, the next recheck hashes and delivers")
+    B:send("GlassChat", payload, { sid = "1760000000096", mac = string.rep("1", 32) })
+    local bad = lib.state.buffers["3|GlassChat|1760000000096"]
+    eq(bad and bad.hash, T.SHA256(payload), "a stream whose MAC fails caches its hash at the first check")
+end
+
 done("test_transport")

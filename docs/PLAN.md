@@ -122,6 +122,14 @@ Each tag's delivery has one of two meanings, chosen at `New`:
   would drop anyway; a message is never evicted, the newcomer is refused. Before MINOR 5 the cap
   was per id, and a newer stream evicted the oldest of any tag, losing another kind's stream (#17)
   or a message (#18).
+  - **One exception since MINOR 6 (#31).** The total and the byte cap are shared by every sender.
+    A sender Battle.net verified **at admission** that hits either evicts the least recently
+    active streams of senders it did **not** verify at admission (a blank peer, proven or merely
+    hinted), messages included, until there is room, and the evicted streams are refused. Nothing
+    else evicts across senders: an unverified sender at a shared cap is refused as before, and a
+    verified sender's stream is never a victim. Without this, a hinted id holding our nonce could
+    fill both caps with streams that never finish and starve the household (§5.2, audit
+    2026-10-29). A sender's own per-(sender, tag) cap never evicts anyone else's stream.
 
 ### `store`
 - **A getter, called on every access**, returning the host's table, or nil while its
@@ -458,6 +466,9 @@ never data.
   - the GUID and realm (AltStable's hello carried them unproven);
   - project and region.
 
+  It does **not** bind the faction: a host's `sender.faction` for a key- or proof-proven peer is
+  what the hello claims (#31). Binding it would change the proof's input, which is a new wire.
+
 **Nonces:**
 - Ours is fixed per id for the session, and cleared when that id goes offline or its binding
   drops (`Core.lua` 975-979).
@@ -487,7 +498,7 @@ and be bound as one of our characters.
 | **`theirNonce` is stored only for an id that is verified, ours by elimination, or proven this session** | AltStable stores it before any check (`Core.lua` 3483). "Proven this session" keeps a reloaded peer working while the friends list is failing closed |
 | **Project and region are in the proof and the MAC** | A beta key copied to live can't prove there |
 | **Monotonic sid:** `sid = max(GetServerTime() * 1000, lastSid + 1)`, with `lastSid` kept in the store (§3), so it survives a `/reload` in the same second and has no counter to exhaust: past 1000 sends in a second it runs ahead of the clock and stays monotonic. One counter serves every tag. Documented limit: after a client **crash** SavedVariables aren't written, so a send in the same second can repeat or fall below an old sid and is refused until the clock passes it. The receiver keeps a floor per **(tag, sender GUID)** for the session, raised only after an authenticated completion, and accepts only higher sids. A messages host (MINOR 5, §1) keeps instead the newest 256 sids delivered per (tag, sender GUID) and refuses those and anything older: every sid at most once, in any order | GlassChat applies a snapshot wholesale. Two genuine sends arriving out of order, or a relay replaying an old genuine stream under its own id, would otherwise roll the lists back. Keying by GUID, which the proof binds, rather than by the session id handle, covers the replay |
-| **Caps:** the 32 KB ceiling and the `n` cap (§2); 2 concurrent streams per sender id and tag (4 for a messages tag, MINOR 5) and 8 in total; at most 128 KB buffered; the 6 s settle and the 60 s sweep; a refused stream stays refused; every message at most 255 bytes | AltStable has no limit on streams, `total` or size, and `StreamReady` loops to an unchecked `buf.total`: a freeze a peer can trigger |
+| **Caps:** the 32 KB ceiling and the `n` cap (§2); 2 concurrent streams per sender id and tag (4 for a messages tag, MINOR 5) and 8 in total; at most 128 KB buffered; the 6 s settle and the 60 s sweep; a refused stream stays refused; every message at most 255 bytes. **Since MINOR 6 (#31):** at the total or the byte cap, a sender Battle.net verified at admission evicts the least recently active streams of senders not verified at admission until there is room (§1); nothing else evicts across senders | AltStable has no limit on streams, `total` or size, and `StreamReady` loops to an unchecked `buf.total`: a freeze a peer can trigger. The shared caps had no reservation: a hinted id, which holds our nonce by design, filled the byte budget with two streams that never finish (a chunk every 5 s keeps the 6 s settle from firing) and a verified peer's snapshots were refused for 120 s, repeatedly (audit 2026-10-29). Reachable from outside only if §7.9 is positive |
 | **Reset `bnetUpSince` on `BN_DISCONNECTED`** too, not only on `PLAYER_LOGIN` and `BN_CONNECTED` | A reconnecting friends list is loading again |
 | **Entropy.** One SHA-256 over AltStable's sources (`Core.lua` 877-884) plus `GetServerTime()` and `fastrandom()`. It makes the key (once ever) and the nonces | The client has no cryptographic random source, so a key made once from many sources is the best available |
 
@@ -527,6 +538,14 @@ cut to 32 hex, on chunk 1.
     - **stated limit:** a stream begun while its sender was blank and never identified is credited
       to the first character authenticated for that id after it. Ownership holds (Battle.net
       verifies the game account as ours), and an unidentified sender had no floor to bypass;
+    - **stated assumption (#31):** "or has logged out since" reads a missing binding as the
+      account having left. If the client ever reassigned a game account id handle to **another**
+      Battle.net account while one of its streams is open, that account could complete the stream
+      unchecked, credited to the old character (it would also need the open stream's tag, sid and
+      `n`). Whether a handle is reused within a session is unmeasured (§7.11). A record check
+      would not be fail-closed, since a reassigned handle can read missing, offline or blank, and
+      the 2 s rescan on `BN_INFO_CHANGED` does not bound the window (a last chunk can land first),
+      so the assumption is documented and measured, not coded (audit 2026-10-29, Codex agreed);
   - any other sender is delivered only if it has a **proven hello at completion** and the MAC
     verifies under a trusted key with **our current nonce for that id**;
   - a sender that isn't verified may fill a buffer only if we have sent that id our nonce. The
@@ -619,13 +638,21 @@ wire log and a Python reader like `read-wirelog.py`.
    - can that friend still send game data?
 
    If yes, a friend can make themselves look like ours by elimination whenever they like, and the
-   deferred relay items (§5.4) come back **before r1 is tagged**.
+   deferred relay items (§5.4) come back **before r1 is tagged**. Two more things then follow
+   (#31): such an id holds our nonce, so it can buffer data frames (the shared caps now reserve
+   room for verified senders, §1), and our keyless hello tells it our name, GUID, realm and
+   faction, Appear Offline or not.
 
    **Owner decision, 2026-10-05 (#1):** `r2`, the first tag, was released before §7 was
    measured; the probe had not been deployed. §7.9 is still owed, and a positive result brings the
    deferred relay items into the next MINOR rather than blocking a tag that already exists.
 10. Does `BNGetInfo`'s `presenceID` equal our `bnetAccountID`? Recorded for completeness;
     ownership is matched by BattleTag anyway (§5.2).
+11. **Game account id handles over a session** (#31): log each id's GUID **and** Battle.net
+    account as they change, with the presence and event timing. Is a handle ever reassigned to
+    another Battle.net account while this client stays online? GUID changes alone also happen on
+    an ordinary character switch. Decides whether §5.3's stated assumption needs code. One session
+    without reuse is evidence, not a platform guarantee.
 
 ## 8. Repo layout
 
@@ -784,7 +811,10 @@ No P0; 3 P1s and 8 P2s. Every fix is cheap, and all are in:
 - **The MAC on chunk 1 binds every chunk:** `tag`, `sid`, `n` and the hash of the decoded payload
   are in it.
 - **Verified status comes only from Battle.net**, so no stranger can choose the MAC-free path.
-- **Reflection** of a hello or a stream is stopped by the own-name check and own-key rejection.
+- **Reflection** of a hello or a stream is stopped by the GUID echo check, the nonce reflection
+  check and own-key rejection. (Until MINOR 6 an own-name check stood beside them; every copy's
+  hello carries a GUID, so it protected nothing and dropped a verified peer that shares our full
+  name on another realm, #31.)
 - **Identity from `senderID`:** a stranger can't inject into another id's stream.
 - **Arithmetic:** the 75/44-byte headers, the `n` cap, about 205 bytes of hello.
 - **Wire growth:** unknown frame types are ignored, and the domain strings carry the wire
@@ -865,3 +895,37 @@ AltStable's database reply overtaken by its own request or ping (#18, AltStable#
     Four messages on a `messages = true` tag (2000, 1000, 400, 100 B), each delivered once.
   - ChatThrottleLib ran faster than §7.5's 570 B/s here: 4.5 KB took 2.8 s and 3.5 KB took 3.5 s.
     Right after login it was slower: a 1000 B send took 6.9 s to 13.7 s to report `sent`.
+
+### MINOR 6: the 2026-10-29 audit (#31)
+A desk audit of r5 at `b3566b7` (Claude, every finding reproduced against the test harness),
+then a consensus round with Codex (gpt-6-astra, high effort, code-review mode) on the fixes. No
+game access until 2026-11-04, so the two-account check waits for that date.
+- **Verdict.** No path lets a plain Battle.net friend (named, in the friends list, never given our
+  nonce) get a hello answered, a key or proof believed, a data frame buffered, or anything
+  delivered. Codex's independent hunt over `OnHello`, `OnData`, `TryDeliver`, `FirstDelivery`,
+  `Scan`, `Route` and the store paths found nothing beyond the items below and §5.1's accepted
+  relay limit.
+- **Findings and what changed:**
+  1. The shared caps starved verified senders (medium, gated on §7.9): fixed, §1 and §5.2. Codex's
+     corrections taken: `verified == nil` counts as unverified (the hinted sender's value), the
+     byte cap evicts on later chunks too, eviction runs until there is room, the incoming stream is
+     never a victim, evicted streams are refused, a per-(sender, tag) cap failure never evicts.
+  2. The own-name check in `OnHello` dropped a Battle.net-verified peer that shares our full name
+     on another realm (low, liveness): removed; the GUID echo and nonce reflection checks cover
+     reflection (§10 above). Codex checked every released fixture sends hellos with a GUID.
+  3. Every unverified hello walked the whole friends list before the record was looked at (low): the
+     walk is now lazy, inside `OwnByElimination`, so a named friend's hello costs none.
+  4. The MAC-free branch accepts a missing binding (low, theoretical): documented as a stated
+     assumption in §5.3, measured by §7.11. Codex: a record check would not be fail-closed, and the
+     rescan does not bound the window.
+  5. The faction is not in the proof (§5.1, documented); the payload hash was recomputed on every
+     recheck (now cached lazily in the MAC branch, so verified deliveries stay hash-free and buffers
+     an older copy completed still check); a hinted id learns our character (§7.9).
+- **Tests and mutations:** the starvation cases (bytes on a later chunk, all eight slots, never
+  another verified sender, an unverified sender never evicts, a proven blank peer's message is
+  evictable), the same-name verified peer, our own GUID rejected before anything is kept, a named
+  friend's hello walks nothing, the hash cached and reused, and a stream waiting under each
+  released copy delivered by the current one. Five new mutations; "our own name is accepted"
+  became "our own echo is accepted".
+- Wire, store, the reasons enum and the proof unchanged. Not yet tagged: `r6` follows the
+  2026-11-04 check (`/fp steps las check`), with §7.9 and §7.11 measured the same day.

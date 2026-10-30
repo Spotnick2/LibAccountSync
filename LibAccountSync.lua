@@ -28,7 +28,7 @@
 -- - lib.ready = MINOR is the last line: a copy that threw partway leaves every
 --   entry point inert.
 
-local MAJOR, MINOR = "LibAccountSync-1.0", 5
+local MAJOR, MINOR = "LibAccountSync-1.0", 6
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end   -- an equal or newer copy is already loaded
 
@@ -938,8 +938,10 @@ function I.OnHello(id, text)
     if key ~= "" and not ValidKey(key) then return end
     if proof ~= "" and not IsHex(proof, 32) then return end
     if guid ~= "" and not IsGuid(guid) then return end
+    -- Our own hello reflected back carries our GUID (every copy sends one)
+    -- and our nonce; the name is not checked: two of our characters may
+    -- share one on different realms (audit 2026-10-29, MINOR 6).
     if guid ~= "" and guid == PlayerGuid() then return end        -- our own echo
-    if Short(name) == Short(PlayerName()) then return end         -- our own name
     if nonce == S.myNonce[id] then return end                     -- reflection
     local me = I.Self()
     local g = I.OwnAccountGame(id, me)
@@ -950,8 +952,10 @@ function I.OnHello(id, text)
     -- UnitName and Battle.net (#4: the surname), and an older copy sends only
     -- the first name. The GUID is the same everywhere.
     if g and guid ~= g.playerGuid then return end
-    local friends = not g and I.FriendGameIDs() or nil
-    local hinted = not g and I.OwnByElimination(id, me, friends)
+    -- The friends list is walked only once the record is blank and online
+    -- (OwnByElimination fetches it lazily): a named friend's hello costs no
+    -- walk, so a flood of them can't (audit 2026-10-29, MINOR 6).
+    local hinted = not g and I.OwnByElimination(id, me)
     -- Their nonce is kept only from an id that is ours, a hint, or proven
     -- this session (AltStable stored it from anyone, Core.lua 3483).
     local fresh = nonce ~= S.theirNonce[id]
@@ -995,7 +999,7 @@ function I.OnHello(id, text)
             S.theirNonce[id] = nonce
             S.learned[id] = { name = name, guid = guid, faction = faction ~= "" and faction or nil,
                               realm = realm ~= "" and realm or nil, proven = how }
-            peer = I.GameFor(id, me, friends)
+            peer = I.GameFor(id, me)
         end
     end
     if not peer then
@@ -1288,13 +1292,13 @@ function I.OnData(id, text)
         -- Not admitted: dropped, not remembered, so a stranger's flood can't
         -- grow the refused table.
         if not p and not S.myNonce[id] then return end
+        local verified = p ~= nil and p.proven == "bnet"
         -- The cap is per (sender id, tag), so one tag's streams never crowd
         -- out another's (#17); the total and the byte cap bound memory.
         local cap = inst.messages == true and STREAMS_PER_ID_MESSAGES or STREAMS_PER_ID
-        local perId, total, bytes = 0, 0, 0
+        local perId, total = 0, 0
         for _, b in pairs(S.buffers) do
             total = total + 1
-            bytes = bytes + b.bytes
             if b.id == id and b.tag == tag then perId = perId + 1 end
         end
         if perId >= cap and inst.messages ~= true then
@@ -1310,9 +1314,17 @@ function I.OnData(id, text)
                 total, perId = total - 1, perId - 1
             end
         end
-        if perId >= cap or total >= STREAMS_TOTAL then S.refused[key] = time(); return end
+        -- A sender's own cap is its own business: never a reason to evict.
+        if perId >= cap then S.refused[key] = time(); return end
+        -- The total is shared by every sender. A sender Battle.net verifies
+        -- makes room by evicting streams of senders it didn't verify at
+        -- admission; otherwise a hinted id holding our nonce could fill the
+        -- caps with streams that never finish and starve the household
+        -- (audit 2026-10-29, MINOR 6, #31). Nothing else evicts across senders.
+        if total >= STREAMS_TOTAL and verified then total = total - I.EvictUnverified(1, 0) end
+        if total >= STREAMS_TOTAL then S.refused[key] = time(); return end
         buf = { id = id, tag = tag, sid = tonumber(sid), sidText = sid, n = n, chunks = {}, have = 0,
-                bytes = 0, last = time(), verified = p and p.proven == "bnet", peer = p,
+                bytes = 0, last = time(), verified = verified, peer = p,
                 -- The character this id was last bound to this session, even
                 -- if its presence is blank right now (Codex r1 round 4).
                 prior = (p and p.guid) or S.lastGuid[id] }
@@ -1322,6 +1334,12 @@ function I.OnData(id, text)
     if buf.complete or buf.n ~= n or buf.chunks[i] then return end
     local bytes = 0
     for _, b in pairs(S.buffers) do bytes = bytes + b.bytes end
+    if bytes + #body > BUFFER_BYTES and buf.verified then
+        -- The byte cap on any chunk of a verified sender's stream (#31): the
+        -- stream itself is never a victim, being verified.
+        local _, freed = I.EvictUnverified(0, bytes + #body - BUFFER_BYTES)
+        bytes = bytes - freed
+    end
     if bytes + #body > BUFFER_BYTES then
         S.buffers[key] = nil
         S.refused[key] = time()
@@ -1331,6 +1349,29 @@ function I.OnData(id, text)
     buf.have, buf.bytes, buf.last = buf.have + 1, buf.bytes + #body, time()
     if i == 1 then buf.mac = mac end
     if buf.have == buf.n then I.Complete(key, buf) end
+end
+
+-- Make room for a Battle.net-verified sender (#31): drop the least recently
+-- active streams of senders that were NOT verified when admitted (a blank
+-- peer, proven or merely hinted; `verified` nil or false), until `slots`
+-- stream slots and `bytes` bytes are free or no such stream is left. A
+-- dropped stream is refused, so its remaining chunks don't recreate it.
+-- Returns the slots and bytes freed.
+function I.EvictUnverified(slots, bytes)
+    local freedSlots, freedBytes = 0, 0
+    while freedSlots < slots or freedBytes < bytes do
+        local victimKey, victim
+        for k, b in pairs(S.buffers) do
+            if not b.verified and (not victim or b.last < victim.last or (b.last == victim.last and k < victimKey)) then
+                victimKey, victim = k, b
+            end
+        end
+        if not victim then break end
+        S.buffers[victimKey] = nil
+        S.refused[victimKey] = time()
+        freedSlots, freedBytes = freedSlots + 1, freedBytes + victim.bytes
+    end
+    return freedSlots, freedBytes
 end
 
 -- A stream with no chunk for STREAM_SETTLE seconds is dropped; one complete
@@ -1402,7 +1443,11 @@ function I.TryDeliver(key, buf)
         -- be passed off as the new one's (Codex round 2 of r1).
         local me = I.Self()
         if not me or me.project == nil or me.region == nil then return false end
-        local hash = SHA256(buf.payload)
+        -- Hashed once per stream, at its first MAC check (not at completion:
+        -- a verified sender's stream never needs it, and a buffer an older
+        -- copy completed has no hash yet), then kept for every recheck.
+        buf.hash = buf.hash or SHA256(buf.payload)
+        local hash = buf.hash
         for k in pairs(I.TrustUnion()) do
             if I.Mac(k, S.myNonce[id], now.guid, me.project, me.region, buf.tag, buf.sidText, buf.n, hash) == buf.mac then
                 I.Trust(k)

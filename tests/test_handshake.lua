@@ -52,6 +52,20 @@ do
     eq(answer.proof, proofFor(store.key, B.nonce, answer.nonce, "Malas Belgarden", WoW.player.guid,
        WoW.player.realm, 18, 90), "  our proof binds the whole name")
 end
+-- 1c. Two of our own characters with one full name on different realms
+--     (#31): the verified account pairs, by GUID. r5 dropped its hello as
+--     "our own name", so the two never held each other's nonce.
+do
+    local lib, inst = session()
+    local B = Peer.new({ name = "Malas", guid = "Player-2-0000000B", realm = "Other Realm" })
+    inst.Rescan()
+    B:deliver(B:hello({ key = B.key }))
+    eq(names(inst), "Malas:bnet", "a verified account with our name is a peer")
+    eq(lib.state.theirNonce[3], B.nonce, "  and its nonce is held")
+    WoW.sent = {}
+    eq(inst.Send("x"), 1, "  so Send reaches it")
+end
+
 -- A verified account is matched by GUID: an older copy's first-name-only
 -- hello, a hyphenated surname and a long accented name all pair.
 for _, case in ipairs({ { "a first-name-only hello (a cc92deb copy)", "Karuzo Test", "Karuzo" },
@@ -175,9 +189,13 @@ do
     local ours = B:ourHello()
     B:deliver(B:hello({ nonce = ours.nonce }))
     eq(names(inst), "", "a hello reflecting our own nonce is dropped")
-    -- A hello in our own name.
-    B:deliver(B:hello({ name = "Malas", nonce = "3333333333333333" }))
-    eq(names(inst), "", "a hello in our own name is dropped")
+    -- A hello carrying our own GUID (our own words reflected, with a nonce of
+    -- its own): dropped before anything is kept or answered (#31).
+    local kept, hellos = lib.state.theirNonce[3], #sentTo(3, "H1|")
+    B:deliver(B:hello({ guid = WoW.player.guid, nonce = "3333333333333333" }))
+    eq(names(inst), "", "a hello with our own GUID is dropped")
+    eq(lib.state.theirNonce[3], kept, "  before its nonce is kept")
+    eq(#sentTo(3, "H1|"), hellos, "  and without an answer")
     -- A proof made with OUR key: our own key never counts as trusted.
     store.trusted[store.key] = 200
     B:deliver(B:hello({ proofKey = store.key, nonce = "4444444444444444" }))
@@ -196,6 +214,27 @@ do
     F:deliver(F:hello({ key = OTHER_KEY, proof = "" }))
     eq(names(inst), "", "a trusted key from a friend's id is not believed")
     eq(lib.state.theirNonce[9], nil, "  and its nonce is not kept")
+end
+
+-- 8b. A named friend's hello is discarded without walking the friends list
+--     (#31): its record alone says it isn't blank, so a flood of them costs
+--     no walk. A blank friend's hello still needs the walk, and is still not
+--     believed.
+do
+    local lib, inst = session(seasoned())
+    WoW.bn.friends = { { 9 }, { 10 } }
+    local F = Peer.new({ id = 9, name = "Friend", guid = "Player-1-0000000F", bnet = 77 })
+    local G = Peer.new({ id = 10, name = "Quiet", guid = "Player-1-00000010", blank = true, bnet = 78 })
+    local walks, orig = 0, C_BattleNet.GetFriendNumGameAccounts
+    C_BattleNet.GetFriendNumGameAccounts = function(...) walks = walks + 1 return orig(...) end
+    F:deliver(F:hello({ key = OTHER_KEY }))
+    eq(walks, 0, "a named friend's hello walks no friends list")
+    eq(names(inst), "", "  and is not believed")
+    G:deliver(G:hello({ key = OTHER_KEY, proof = "" }))
+    check(walks > 0, "a blank friend's hello still checks the list")
+    eq(names(inst), "", "  and is not believed either")
+    eq(lib.state.theirNonce[10], nil, "  nor is its nonce kept")
+    C_BattleNet.GetFriendNumGameAccounts = orig
 end
 
 -- 9. The friends list fails closed: still loading, or with a gap.

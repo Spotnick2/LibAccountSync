@@ -1,13 +1,12 @@
--- wow_stubs.lua: a minimal WoW: Forever mock for Lua 5.1 unit tests.
+-- wow_stubs.lua: the client APIs LibAccountSync reads, over WowTestKit's core.
 -- dofile("tests/wow_stubs.lua") FIRST in every test; drive it via the WoW table.
 --
--- What it models, on purpose:
--- - STRICT globals: reading any global it does not define is an error. Each
---   stub is an API confirmed in the 1.60.1.70938 dump; defining something
---   Forever lacks is how a missing API survives into a build.
--- - SECRETS as newproxy userdata: arithmetic, ordering, tostring, concat and
---   indexing throw. Lua 5.1 cannot make a truth test or == throw, so those
---   two misuses are caught by test_secrets' grep, not here.
+-- The mechanics are WowTestKit's (tests/kit.lua loads the commit and the build
+-- tests/kit.pin names): strict globals, secrets (WoW.Secret, newproxy values
+-- that throw; a pcall that swallows a touch is counted and fails done()),
+-- frames that record every method called, event names checked against the
+-- build, timers, check / eq / done. This file adds, each confirmed in the
+-- build's API dump:
 -- - BATTLE.NET as measured on 70124 (AltStable #58, docs/SYNC-DISCOVERY.md),
 --   ported from AltStable's tests/wow_stubs.lua 1407-1494: game account ids
 --   are handles local to this client, an unknown id is TargetRequired (6),
@@ -19,34 +18,15 @@
 --   and steps aside), with v32's checks: a known priority, chat type WHISPER,
 --   at most 255 bytes, and the callback (arg, didSend, result).
 
-WoW = {}
+dofile("tests/kit.lua")
 
 --------------------------------------------------------------------------------
--- Secrets
+-- Clock
 --------------------------------------------------------------------------------
-
-local secrets = setmetatable({}, { __mode = "k" })
-
-function WoW.Secret(label)
-    local p = newproxy(true)
-    local mt = getmetatable(p)
-    local function boom() error("secret value touched in Lua: " .. tostring(label), 2) end
-    for _, k in ipairs({ "__tostring", "__concat", "__add", "__sub", "__mul", "__div", "__mod",
-                         "__pow", "__unm", "__lt", "__le", "__len", "__index", "__newindex", "__call" }) do
-        mt[k] = boom
-    end
-    secrets[p] = label
-    return p
-end
-
-function WoW.IsSecret(v) return secrets[v] ~= nil end
-function issecretvalue(v) return secrets[v] ~= nil end
-
---------------------------------------------------------------------------------
--- Clock and timers
---------------------------------------------------------------------------------
-
-WoW.now = 1760000000
+-- WoW.now is the epoch (time() and GetServerTime() read it). GetTime() is the
+-- client's uptime, as on the client (the probe logs read 374632.4), not the
+-- core's WoW.now: the library hashes it into its entropy, and an epoch there
+-- would change every nonce the tests compare.
 
 function time() return WoW.now end
 function GetServerTime() return WoW.now end
@@ -54,59 +34,12 @@ function GetTime() return WoW.now - 1759990000 end
 function debugprofilestop() return (WoW.now - 1759990000) * 1000 end
 function fastrandom(a, b) return math.random(a, b) end
 
-C_Timer = {}
-function C_Timer.After(seconds, fn)
-    table.insert(WoW.timers, { at = WoW.now + seconds, fn = fn })
-end
-function C_Timer.NewTicker(seconds, fn)
-    local t = { at = WoW.now + seconds, fn = fn, every = seconds }
-    table.insert(WoW.timers, t)
-    return { Cancel = function() t.cancelled = true end }
-end
-
--- Move the clock, a second at a time, running each timer when it falls due.
+-- A second at a time, as the core's notes ask of a clock whose timers start
+-- more timers: one scheduled inside a callback counts from that second, not
+-- from the end of the whole advance.
+local coreAdvance = WoW.advance
 function WoW.advance(seconds)
-    for _ = 1, seconds do
-        WoW.now = WoW.now + 1
-        local due = {}
-        for i = #WoW.timers, 1, -1 do
-            local t = WoW.timers[i]
-            if t.cancelled then
-                table.remove(WoW.timers, i)
-            elseif t.at <= WoW.now then
-                if t.every then t.at = t.at + t.every else table.remove(WoW.timers, i) end
-                table.insert(due, 1, t)
-            end
-        end
-        for _, t in ipairs(due) do t.fn() end
-    end
-end
-
---------------------------------------------------------------------------------
--- Frames and events
---------------------------------------------------------------------------------
-
-local Frame = {}
-Frame.__index = Frame
-function Frame:RegisterEvent(e) self.events[e] = true end
-function Frame:UnregisterEvent(e) self.events[e] = nil end
-function Frame:IsEventRegistered(e) return self.events[e] == true end
-function Frame:SetScript(name, fn) self.scripts[name] = fn end
-function Frame:GetScript(name) return self.scripts[name] end
-function Frame:Show() self.shown = true end
-function Frame:Hide() self.shown = false end
-
-function CreateFrame()
-    local f = setmetatable({ events = {}, scripts = {} }, Frame)
-    table.insert(WoW.frames, f)
-    return f
-end
-
--- Fire an event at every frame registered for it, as the client does.
-function WoW.fire(event, ...)
-    for _, f in ipairs(WoW.frames) do
-        if f.events[event] and f.scripts.OnEvent then f.scripts.OnEvent(f, event, ...) end
-    end
+    for _ = 1, seconds do coreAdvance(1) end
 end
 
 --------------------------------------------------------------------------------
@@ -142,7 +75,6 @@ function securecallfunction(fn, ...)
     if not r[1] then geterrorhandler()(r[2]); return end
     return unpack(r, 2, table.maxn(r))
 end
-strmatch = string.match   -- LibStub uses it
 
 --------------------------------------------------------------------------------
 -- Battle.net
@@ -297,10 +229,8 @@ end
 -- State
 --------------------------------------------------------------------------------
 
-function WoW.reset()
+table.insert(WoW.onReset, function()
     WoW.now = 1760000000
-    WoW.timers = {}
-    WoW.frames = {}
     WoW.prefixes = {}
     WoW.sent = {}
     WoW.sendResults = {}
@@ -314,7 +244,7 @@ function WoW.reset()
     WoW.bn = { me = 1, myId = 2, project = 18, region = 90, tag = "Owner#1", connected = true,
                accounts = {}, friends = {}, secret = {} }
     rawset(_G, "ChatThrottleLib", ctlStub)
-end
+end)
 
 -- A client that can't tell its own game or region (the r2 behaviour when our
 -- presence is blank and nothing is stored).
@@ -330,10 +260,5 @@ end
 
 WoW.reset()
 
--- Strict globals: any read of an undefined global is an error, except the two
--- bundled files' own globals, which each checks for an earlier copy.
-local allowNil = { LibStub = true, ChatThrottleLib = true }
-setmetatable(_G, { __index = function(_, k)
-    if allowNil[k] then return nil end
-    error("read of undefined global '" .. tostring(k) .. "' (not stubbed: is it in the API dump?)", 2)
-end })
+-- The two bundled files' own globals may read nil: each checks for an earlier copy.
+Kit.strict({ LibStub = true, ChatThrottleLib = true })

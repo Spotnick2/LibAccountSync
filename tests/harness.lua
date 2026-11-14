@@ -1,26 +1,9 @@
--- harness.lua: assertions, the library loader, and the other account.
--- dofile it after wow_stubs.lua. Run from the repo root so the paths resolve.
-
-local passed, failed = 0, 0
+-- harness.lua: the library loader, and the other account. dofile it after
+-- wow_stubs.lua (check / eq / done are WowTestKit's). Run from the repo root so
+-- the paths resolve.
 
 -- The error message when f(...) throws, else nil.
 function errs(f, ...) local ok, e = pcall(f, ...) return not ok and tostring(e) or nil end
-
-function check(cond, msg)
-    if cond then passed = passed + 1 else
-        failed = failed + 1
-        io.write("  FAIL: " .. tostring(msg) .. "\n")
-    end
-end
-
-function eq(actual, expected, msg)
-    check(actual == expected, string.format("%s: expected %s, got %s", msg, tostring(expected), tostring(actual)))
-end
-
-function done(name)
-    io.write(string.format("%s: %d passed, %d failed\n", name, passed, failed))
-    os.exit(failed == 0 and 0 or 1)
-end
 
 function readFile(path)
     local f = assert(io.open(path, "rb"), "cannot open " .. path)

@@ -946,7 +946,7 @@ game access until 2026-11-04, so the two-account check waits for that date.
     was renumbered, which is why the watch starts afresh at a login. The character switch step was
     not done (same GUID), so it is still owed.
 
-### Proposed for MINOR 7: every delivery proven by its MAC (#37) — UNDER REVIEW
+### Proposed for MINOR 7: every delivery proven by its MAC (#37) — AGREED (Codex, 4 rounds)
 Reported by AltStable on 70938: after a character switch, a message from the new character was
 handed to `OnMessage` as the old one, 13 s later. Reproduced at the desk (2026-11-14):
 - **Battle.net vouched at admission (the bug).** The other account is bound by Battle.net to G1.
@@ -1046,10 +1046,25 @@ a field (a missing `peer` only removes that candidate). A buffer an older copy c
 own `awaitUntil` (10 s). The guarantee starts when this copy takes over; it can't undo what an
 older copy delivered.
 
-**For the review:**
-- Is any delivery path left that credits a stream without its MAC?
-- Is the recheck before `ForgetId` sound, or can it deliver something the forget was meant to stop
-  (a binding that went because the account is someone else's now)?
-- Are the stated losses right and complete? Anything else that is delivered today and would not
-  be?
-- Is 30 s right, and does holding complete streams that long change anything at the caps?
+**Review log (Codex gpt-6-astra, high effort, read-only, 2026-11-14).**
+1. DISAGREE with the first proposal (remember a dropped hello's GUID, MAC only then): the second
+   branch also misattributes, and data completing before the hello can't be fixed that way.
+   Recommended mandatory MAC with the losses stated: taken.
+2. AGREE WITH CHANGES: the recheck before `ForgetId` ran host handlers mid-transition; the losses
+   were incomplete. Taken: verify, then forget, then deliver later; the losses rewritten.
+3. AGREE WITH CHANGES: `Route` must pass the binding it read; streams taken out of `S.buffers`
+   could be overtaken by a later completion; the verifier must be pure. Taken: pinned in place,
+   one ordered drain, `me` read before the transition.
+4. AGREE, implement. Notes for the implementation:
+   - keep an existing pin (`buf.as`) across a later forget: never re-verify or replace it (its
+     nonce is gone); a scan can forget the same id twice;
+   - keep the key that verified with the pin, so the trust refresh at delivery uses it;
+   - a pinned stream stays evictable when it wasn't Battle.net-verified at admission (MINOR 6's
+     rule is about admission; a pin authenticates, it doesn't reserve room), and a newer snapshot
+     of the tag may still evict it at the per-(sender, tag) cap;
+   - `GameFor` can call `ForgetId` from inside `TryDeliver`: after resolving the binding, look for
+     a pin made by that very call before deciding the stream waits;
+   - regression cases: a repeated forget, a pin made inside `GameFor`, a settle timer firing
+     before the next-frame drain (`Settle` drains first, so the pin is delivered), a new completion
+     before that drain, a pinned stream evicted, a first handler wiping the session before the
+     next pinned delivery, `Route` finding G2, and invalid-MAC buffers carried across an upgrade.

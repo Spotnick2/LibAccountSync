@@ -516,11 +516,13 @@ check(logHas('bye at PLAYER_LOGOUT to "Karuzo": SendTo -> 1 nil; onResult sent n
 -- logout loss), and a control after it on the probe's own prefix.
 local beforeLine
 for _, l in ipairs(DB.log) do if l:find("bye: before the send", 1, true) then beforeLine = l end end
-local theirs = LibStub("LibAccountSync-1.0").state.theirNonce[3]
-check(beforeLine and beforeLine:find("to id 3 under its nonce " .. theirs:sub(1, 4) .. ";", 1, true),
-      "the destination and the nonce the MAC is made under are logged before the send: " .. tostring(beforeLine))
-check(beforeLine and beforeLine:find("; ChatThrottleLib v10000 queueing nil", 1, true), "  with ChatThrottleLib's state")
+local LS = LibStub("LibAccountSync-1.0").state
+check(beforeLine and beforeLine:find('to "Player-1-0000000B"; ChatThrottleLib v10000 queueing nil', 1, true),
+      "ChatThrottleLib's state is logged before the send: " .. tostring(beforeLine))
+check(logHas("bye: SendTo chose id 3 under its nonce " .. LS.theirNonce[3]:sub(1, 4)),
+      "  the destination SendTo chose, and the nonce the MAC is made under")
 check(logHas("bye: after the send, 1 client send(s) tried, the frame "), "  then the client send it tried, by size")
+check(logHas(" to id 3; ChatThrottleLib "), "  and the id the client was handed")
 local last, before = WoW.sent[#WoW.sent], WoW.sent[#WoW.sent - 1]
 check(last and last.prefix == "LASProbe" and last.target == 3 and tostring(last.text):match("^BYECTL|%d+$"),
       "a control follows, on the probe's prefix, to the same id")
@@ -534,6 +536,30 @@ eq(byes, 1, "the other account gets one verified bye")
 sentBefore = #WoW.sent
 WoW.fire("PLAYER_LOGOUT")
 eq(#WoW.sent, sentBefore, "  once: the next logout sends nothing")
+-- One GUID bound to two ids (PLAN §1, SendTo; test_transport 19d): SendTo
+-- picks the one holding a nonce, and the log and the control follow its
+-- pick, whichever id is seen first (Codex on #45). Only the nonces are set
+-- by hand here, to put the nonce on each id in turn.
+local B6 = Peer.new({ id = 6, name = B.name, guid = B.guid })
+T.Sync.Rescan()
+B6:deliver(B6:hello({ key = B6.key }))
+check(LS.peers[6] and LS.peers[6].guid == B.guid and LS.theirNonce[6], "(two ids bound to one GUID, both with a nonce)")
+for _, holder in ipairs({ 6, 3 }) do
+    local other = holder == 6 and 3 or 6
+    local saved = LS.theirNonce[other]
+    LS.theirNonce[other] = nil
+    las("bye")
+    WoW.fire("PLAYER_LOGOUT")
+    check(logHas(("bye: SendTo chose id %d under its nonce %s"):format(holder, LS.theirNonce[holder]:sub(1, 4))),
+          ("the nonce on id %d only: the log names the id SendTo chose"):format(holder))
+    local frame, ctl = WoW.sent[#WoW.sent - 1], WoW.sent[#WoW.sent]
+    check(frame and frame.prefix == "LibAcctSync" and frame.target == holder, "  the library's frame went there")
+    check(ctl and ctl.prefix == "LASProbe" and ctl.target == holder, "  and the control follows it")
+    LS.theirNonce[other] = saved
+end
+WoW.bn.accounts[6] = nil
+T.Sync.Rescan()
+eq(#T.Sync.Peers(), 1, "(id 6 gone again)")
 WoW.ctlDefer = true                                -- ChatThrottleLib holds it: no result during the event
 las("bye")
 WoW.fire("PLAYER_LOGOUT")

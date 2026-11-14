@@ -650,6 +650,12 @@ local function Wrap(I, name, make)
     if type(I[name]) == "function" then I[name] = make(I[name]) end
 end
 
+-- While a bye is handed over: the client sends of LibAccountSync's prefix it
+-- tried (count, last size, last id), and the destination SendTo itself
+-- picked, with the nonce its MAC is made under. One GUID can be bound to two
+-- ids (PLAN §1, SendTo), so the probe never guesses the id (Codex on #45).
+local watchingSends, apiSends, apiLen, apiId, byePick = false, 0, nil, nil, nil
+
 local function TraceLibrary()
     local lib = Lib()
     if not lib or type(lib.impl) ~= "table" or type(lib.state) ~= "table" then return end
@@ -710,6 +716,15 @@ local function TraceLibrary()
         if not had then Log(("trace: new nonce %s for id %s"):format(N4(n), tostring(id))) end
         return n
     end end)
+    -- SendTo's pick, observed as it returns: nothing is decided here.
+    Wrap(I, "TargetIds", function(orig) return function(target)
+        local ids = orig(target)
+        if watchingSends and not byePick then
+            local id = type(ids) == "table" and ids[1] or nil
+            byePick = { id = id, nonce = id and S.theirNonce[id] }
+        end
+        return ids
+    end end)
     Wrap(I, "Settle", function(orig) return function(key, buf)
         if not traced[key] then return orig(key, buf) end
         local held = S.buffers[key] == buf
@@ -755,21 +770,15 @@ end
 -- The client sends of LibAccountSync's prefix while a bye is handed over: one
 -- tried with no onResult means the client throttled it and ChatThrottleLib
 -- queued it; none tried means ChatThrottleLib queued it without trying.
-local watchingSends, apiSends, apiLen = false, 0, nil
 local function WatchClientSends()
     if type(C_BattleNet) ~= "table" or type(C_BattleNet.SendGameData) ~= "function" then return end
-    hooksecurefunc(C_BattleNet, "SendGameData", function(_, prefix, text)
+    hooksecurefunc(C_BattleNet, "SendGameData", function(id, prefix, text)
         if watchingSends and not IsS(prefix) and prefix == LAS_PREFIX then
             apiSends = apiSends + 1
             if not IsS(text) and type(text) == "string" then apiLen = #text end
+            if not IsS(id) then apiId = id end
         end
     end)
-end
-
-local function PeerId(guid)
-    for id, p in pairs(Lib().state.peers) do
-        if p.guid == guid then return id end
-    end
 end
 
 --------------------------------------------------------------------------------
@@ -797,12 +806,10 @@ local function ByeAtLogout()
     byeArmed = false
     local p = FindPeer(nil)
     if not p then Log("bye at PLAYER_LOGOUT: no peer, nothing sent"); return end
-    local id = PeerId(p.guid)
-    Log(("bye: before the send, to id %s under its nonce %s; ChatThrottleLib %s"):format(tostring(id),
-        id and N4(Lib().state.theirNonce[id]) or "-", CtlState()))
+    Log(("bye: before the send, to %s; ChatThrottleLib %s"):format(V(p.guid), CtlState()))
     local payload = Padded(("BYE|%d|%d|LOGOUT|"):format(BYE_SIZE, time()), BYE_SIZE)
     local during, result = true, "none"
-    watchingSends, apiSends, apiLen = true, 0, nil
+    watchingSends, apiSends, apiLen, apiId, byePick = true, 0, nil, nil, nil
     local count, why = Sync.SendTo(p.guid, payload, function(_, status, reason)
         result = ("%s %s %s"):format(status, tostring(reason), during and "during the call" or "after it")
     end)
@@ -811,9 +818,11 @@ local function ByeAtLogout()
     local queueing = type(ctl) == "table" and tostring(rawget(ctl, "bQueueing")) or "?"
     Log(("bye at PLAYER_LOGOUT to %s: SendTo -> %s %s; onResult %s; ChatThrottleLib queueing %s"):format(
         V(p.name), tostring(count), tostring(why), result, queueing))
+    local id = byePick and byePick.id
+    Log(("bye: SendTo chose id %s under its nonce %s"):format(tostring(id), N4(byePick and byePick.nonce)))
     Log(("bye: after the send, %d client send(s) tried%s; ChatThrottleLib %s"):format(apiSends,
-        apiLen and (", the frame %d bytes + overhead %s"):format(apiLen,
-            tostring(type(ctl) == "table" and rawget(ctl, "MSG_OVERHEAD"))) or "", CtlState()))
+        apiLen and (", the frame %d bytes + overhead %s, to id %s"):format(apiLen,
+            tostring(type(ctl) == "table" and rawget(ctl, "MSG_OVERHEAD")), tostring(apiId)) or "", CtlState()))
     if id then
         local ok, r = pcall(C_BattleNet.SendGameData, id, PROBE_PREFIX, ("BYECTL|%d"):format(time()))
         Log(("bye: control on %s to id %s -> %s"):format(PROBE_PREFIX, tostring(id), ok and V(r) or ("ERROR " .. tostring(r))))

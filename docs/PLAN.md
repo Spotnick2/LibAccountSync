@@ -985,14 +985,21 @@ grace window fixes that, since Battle.net is unordered.
    (Codex round 2: the drain runs host code, and a handler that sends or switches the library off
    must never see half a transition):
    - **verify**, with the nonce still in place, each complete stream of that id against the new
-     binding (when the caller has one; a scan passes it) and its admission binding. Pure: no
-     handler, no floor, no state change;
-   - **take out** the streams that verified, with their sender, then **forget** as today (the
-     rest of the buffers, the nonces, the learned binding), and let the caller finish its own
-     transition (a scan rebuilds `S.peers`);
-   - **deliver** the taken streams on the next frame (`C_Timer.After(0)`, through `lib.impl`), in
-     completion order, through the usual floor or message window and enabled check. Skipped if the
-     session was wiped meanwhile (a session counter, bumped by `WipeSession`).
+     binding, when the caller has one (a scan passes `fresh[id]`, `Route` the record it just read;
+     Codex round 3), and its admission binding. Pure: no handler, no floor, no trust refresh, and
+     `me` (project, region) read before the transition, never through `I.Self()`, which can save;
+   - **pin** each stream that verified to its sender (`buf.as`) and leave it in `S.buffers`;
+     **forget** as today, except that the pinned streams stay (the rest of the buffers, the nonces,
+     the learned binding go), and let the caller finish its own transition (a scan rebuilds
+     `S.peers`);
+   - **drain** that id on the next frame (`C_Timer.After(0)`, through `lib.impl`). A pinned stream
+     is delivered as its pinned sender with no second MAC check (its nonce is gone), through the
+     usual floor or message window and enabled check, and refreshes trust then. Because pinned
+     streams stay in `S.buffers`, every delivery still goes through the one ordered drain, sorted
+     by completion: a later stream of the new binding completing before that frame can't overtake
+     one already verified (Codex round 3). A session wipe clears `S.buffers`, pinned streams with
+     them, so nothing is delivered after it; each handler's own effects (a send, switching off) are
+     seen by the next stream's checks.
 
    A stream so delivered after its id stopped being ours was proven by its own character's MAC,
    under our nonce, before the forget: the old character's last words, as send-then-logout already

@@ -112,7 +112,7 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
 
 ```
 pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua
-& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 157)
+& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 158)
 ```
 - Plain Lua 5.1 (`C:\Program Files (x86)\Lua\5.1\`), LibGlass's harness: strict globals (each
   stub confirmed in the API dump), loading through the XML with `(host, ns)`, secrets as

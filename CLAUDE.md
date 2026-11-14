@@ -4,6 +4,10 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
+**MINOR 7 is on this branch, not yet tagged** (#37: every delivery proven by its MAC, so a
+character switch the Battle.net record lags can't credit the new character's stream to the old
+one; agreed with Codex in 4 rounds, PLAN §10 "MINOR 7", with its stated losses). `r7` follows a
+two-account check in game.
 **Status: `r6` released** (tag on `edf8a7d`, MINOR 6: #31, the 2026-10-29 audit: the shared
 stream and byte caps make room for Battle.net-verified senders, the own-name check is gone, the
 friends list is walked lazily, the payload hash is cached; PLAN §10 "MINOR 6"). It passed the
@@ -100,8 +104,9 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
 - Every Battle.net value is read through `I.GameRec`/`I.GameRecByGuid`/`I.AcctRec`/
   `I.FriendGameIDs`, which copy plain fields and mark a record holding a secret `unknown`;
   `test_secrets` greps that nothing else touches a raw record.
-- A sender is always Blizzard's `senderID`; a stream from a non-verified sender needs the MAC
-  (bound to our nonce and the proven GUID); sids are monotonic per (tag, sender GUID) for a
+- A sender is always Blizzard's `senderID`; **every** stream needs its MAC (MINOR 7, #37), bound
+  to our nonce and the GUID it is credited to: the binding now, else the one at admission. A
+  forget verifies an id's waiting streams first and pins the ones that pass; sids are monotonic per (tag, sender GUID) for a
   snapshot tag, and delivered at most once per (tag, sender GUID) for a messages tag (a 256-sid
   window, older refused).
 - The total stream cap and the byte cap are shared by every sender. Only a sender Battle.net
@@ -113,7 +118,7 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
 ```
 pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua + test_wirelog.py
 pwsh tests/run.ps1 -KitDev                               # against the ..\WowTestKit working copy
-& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 160)
+& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 170)
 ```
 - The test scaffolding is WowTestKit (`C:\Projects\WoW\WowTestKit`; its README is the reference)
   at the commit and client build `tests\kit.pin` names. `tests\run.ps1` puts that commit in

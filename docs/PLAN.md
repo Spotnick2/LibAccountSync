@@ -193,8 +193,9 @@ sync).
 - One handler per instance. It is called as `fn(payload, sender, sid)`.
 - **`sender` comes only from Blizzard's `senderID`**, resolved through the Battle.net record or
   through a proven hello (§5). It is **never taken from a field inside the data frame**.
-  - It is captured when the stream is admitted, so a sender who sends and logs out straight away
-    still gets delivered.
+  - It is the character whose GUID the stream's MAC verifies (MINOR 7, §5.3): the binding now,
+    or the one when the stream was admitted, so a sender who sends and logs out (or switches
+    character) straight away still gets delivered as itself.
   - Each call gets a fresh table, so a host can't change library state through it.
   - `sender.proven` says how ownership was established:
     - `"bnet"`: Battle.net shows the id as ours;
@@ -523,37 +524,29 @@ cut to 32 hex, on chunk 1.
   - Only the receiver knows whether it sees the sender as verified. A sender that left the MAC
     out "because it saw the receiver as verified" would have its streams dropped silently
     whenever the two presences differ (found in round 2).
-- **The receiver decides at completion, not at the first frame:**
-  - a sender **verified by Battle.net** is accepted with the MAC unchecked only if it is **the same
-    character** throughout (r1, after Codex's PR #3 rounds):
-    - each id remembers every character authenticated for it this session, however it was
-      authenticated (`NoteBinding`);
-    - a stream records the character bound when it began, or else the first one authenticated
-      after;
-    - it passes without the MAC when that character is the one Battle.net verified then and is
-      still there (or has logged out since: send-then-logout still delivers, as §1 promises), or
-      is the one Battle.net verifies now;
-    - after any change of character on that account, the MAC decides, bound to the GUID shown
-      now, so an older character's stream can't slip under a new one's sid floor;
-    - **stated limit:** a stream begun while its sender was blank and never identified is credited
-      to the first character authenticated for that id after it. Ownership holds (Battle.net
-      verifies the game account as ours), and an unidentified sender had no floor to bypass;
-    - **stated assumption (#31):** "or has logged out since" reads a missing binding as the
-      account having left. If the client ever reassigned a game account id handle to **another**
-      Battle.net account while one of its streams is open, that account could complete the stream
-      unchecked, credited to the old character (it would also need the open stream's tag, sid and
-      `n`). Whether a handle is reused within a session is unmeasured (§7.11). A record check
-      would not be fail-closed, since a reassigned handle can read missing, offline or blank, and
-      the 2 s rescan on `BN_INFO_CHANGED` does not bound the window (a last chunk can land first),
-      so the assumption is documented and measured, not coded (audit 2026-10-29, Codex agreed);
-  - any other sender is delivered only if it has a **proven hello at completion** and the MAC
-    verifies under a trusted key with **our current nonce for that id**;
+- **The receiver decides at completion, not at the first frame, and only by the MAC** (MINOR 7,
+  #37; before it, a sender Battle.net verified was believed with the MAC unchecked, which credited
+  a new character's stream to the old one while the record lagged a relog):
+  - a stream is delivered as the first candidate whose GUID the MAC verifies, under a trusted key
+    and **our current nonce for that id**: the binding now (Battle.net's record, or a proven
+    hello), then the binding when the stream was admitted. An old character's last stream stays
+    its own after the record names the next one; a new character's stream waits until the record
+    or its own proof hello names it;
   - a sender that isn't verified may fill a buffer only if we have sent that id our nonce. The
     caps bound the memory;
-  - **a complete stream whose sender isn't proven yet is kept, not dropped.** It waits as
-    "awaiting hello" for up to 10 s, within the same caps, and is re-checked whenever a hello from
-    that id is believed. It is delivered if the check passes, and dropped at the timeout or when
-    the binding changes (Codex round 3).
+  - **a complete stream that doesn't verify yet is kept, not dropped.** It waits for up to 30 s,
+    within the same caps, and is re-checked whenever a hello from that id is believed, at the end
+    of the wait, and when the id is forgotten (`ForgetId`): there it is verified first, while the
+    nonce is still in place, against the new binding the caller read and its admission binding;
+    one that verifies is pinned to that sender and delivered on the next frame, through the same
+    ordered drain (Codex review of MINOR 7, rounds 2-4);
+  - nothing is delivered on Battle.net's word alone any more, so the #31 assumption (a reassigned
+    handle completing a stream unchecked) no longer applies;
+  - **stated losses** (MINOR 7): a stream MAC'd under our previous nonce (after any session reset:
+    our `/reload`, the library switched off and on, a Battle.net disconnect, a forget of that id);
+    first contact waits for the key-bearing hello instead of Battle.net's word; a stream the old
+    character sent that is admitted only after the record names the new one; and complete streams
+    that can't verify hold their slots up to 30 s (the full list: §10, "MINOR 7").
 
   Together these let a blank-presence peer's data land however it interleaves with the last
   hello of the handshake: some chunks before the hello, or every chunk before it (Battle.net is
@@ -946,7 +939,7 @@ game access until 2026-11-04, so the two-account check waits for that date.
     was renumbered, which is why the watch starts afresh at a login. The character switch step was
     not done (same GUID), so it is still owed.
 
-### Proposed for MINOR 7: every delivery proven by its MAC (#37) — AGREED (Codex, 4 rounds)
+### MINOR 7: every delivery proven by its MAC (#37)
 Reported by AltStable on 70938: after a character switch, a message from the new character was
 handed to `OnMessage` as the old one, 13 s later. Reproduced at the desk (2026-11-14):
 - **Battle.net vouched at admission (the bug).** The other account is bound by Battle.net to G1.

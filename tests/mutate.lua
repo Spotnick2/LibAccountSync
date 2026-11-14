@@ -258,8 +258,7 @@ local M = {
         'function() LibAccountSyncProbeDB.log = {}; Log("log cleared") end' } }, PROBE },
     { "probe: the filler isn't checked", { { " and payload:sub(#head + 1) == Filler(#payload - #head)", "" } }, PROBE },
     { "probe: a duplicate isn't flagged", { { "local dup = seen[i]", "local dup = false" } }, PROBE },
-    { "probe: any Battle.net message is a ping", { { "if IsS(prefix) or prefix ~= PROBE_PREFIX then return end",
-        "if IsS(prefix) then return end" } }, PROBE },
+    { "probe: any Battle.net message is a ping", { { "        if prefix ~= PROBE_PREFIX then return end\n", "" } }, PROBE },
     { "probe: ProbeMsg gets snapshots", { { ", report = Report, messages = true })", ", report = Report })" } }, PROBE },
     { "probe: sendto broadcasts", { { 'Sync.SendTo(p.guid, payload, OnResult("sendto"))',
         'Sync.Send(payload, OnResult("sendto"))' } }, PROBE },
@@ -325,7 +324,10 @@ local M = {
     { "probe: any message counts as a bye", { { 'if payload:match("^BYE|%d+|%d+|%u+|") and verdict:find(" OK ", 1, true) then', "if true then" } }, PROBE },
     { "probe: a bye isn't verified", { { '    if not head then head, n = payload:match("^(BYE|(%d+)|%d+|%u+|)") end\n', "" } }, PROBE },
     { "probe: the logout wait ignores its mark", { { "if byesHeard > byeMark then return true", "if byesHeard >= byeMark then return true" } }, PROBE },
-    { "probe: Ready doesn't mark", { { 'button = "Ready", run = function() byeMark = byesHeard;', 'button = "Ready", run = function() byeMark = 0;' } }, PROBE },
+    { "probe: Ready doesn't mark", { { 'button = "Ready", run = function() byeMark, rawMark = byesHeard, rawByes;', 'button = "Ready", run = function() byeMark, rawMark = 0, rawByes;' } }, PROBE },
+    { "probe: a raw bye frame isn't counted", { { "                rawByes = rawByes + 1\n", "" } }, PROBE },
+    { "probe: any library frame counts as a raw bye", { { 'and text:match("^D1|Probe|(%d+)|1|1|%x+|BYE|%d+|%d+|%u+|")', 'and text:match("^D1|[^|]*|(%d+)|")' } }, PROBE },
+    { "probe: receipt without delivery isn't told apart", { { '    if raw > 0 and delivered == 0 then d = d .. ": received but not delivered', '    if false then d = d .. ": received but not delivered' } }, PROBE },
 
     -- The log reader (test_wirelog)
     { "wirelog: a line without a clock is dropped", { { "if c is None or c[:len(since)] >= since]",

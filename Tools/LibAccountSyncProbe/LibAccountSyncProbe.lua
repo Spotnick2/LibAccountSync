@@ -251,7 +251,9 @@ end
 
 -- Messages seen this session, per batch: a second delivery of one is logged.
 local seenMsg = {}
-local byesHeard = 0     -- #38: messages the other account sent from its PLAYER_LOGOUT
+local byesHeard = 0     -- #38: messages the other account sent from its PLAYER_LOGOUT, delivered
+local rawByes = 0       -- #38: their data frame as the client handed it over, before the library
+local LAS_PREFIX = "LibAcctSync"   -- wire 1's prefix (frozen)
 
 local function OnMessageFor(tag)
     return function(payload, sender, sid)
@@ -592,7 +594,9 @@ end
 -- handed the frame to the client during the event: ChatThrottleLib sends at
 -- once when it isn't queueing and has bandwidth, and then calls onResult
 -- before SendTo returns, with the client's result. If it did, and the other
--- account never gets it, the client dropped it, not the library.
+-- client never even received the frame (its raw BN_CHAT_MSG_ADDON, counted
+-- before the library's checks), the client dropped it. A frame received but
+-- not delivered is the receiving library's doing (Codex on #43).
 
 local BYE_SIZE = 60
 local byeArmed = false
@@ -898,16 +902,26 @@ Probe:Steps("handles", {
 -- character list. Each wait step goes on by itself when the bye arrives; a
 -- timeout (FAIL) means it never came. The other account's own log, saved by
 -- that same logout, says whether the library handed it to the client.
-local byeMark = 0
+-- Receipt and delivery are counted apart (Codex on #43): a frame the client
+-- handed over that the library then refused or held (its sender's record gone
+-- before the frame landed, say) is not the client's loss.
+local byeMark, rawMark = 0, 0
+local function ByeDetail()
+    local delivered, raw = byesHeard - byeMark, rawByes - rawMark
+    local d = ("%d delivered, %d raw frame(s) received"):format(delivered, raw)
+    if raw > 0 and delivered == 0 then d = d .. ": received but not delivered (the library refused or held it)" end
+    if raw == 0 then d = d .. ": nothing reached this client" end
+    return d
+end
 local function ByeWait(how)
     return { text = "Waiting for the other account's bye after its " .. how .. ". This step goes on by itself "
                  .. "when it arrives.",
              wait = function()
-                 if byesHeard > byeMark then return true, how .. ": arrived" end
-                 return false, "no bye yet"
+                 if byesHeard > byeMark then return true, how .. ": " .. ByeDetail() end
+                 return false, ByeDetail()
              end,
              timeout = 60,
-             check = function() return byesHeard > byeMark, byesHeard - byeMark .. " bye(s) since the mark" end }
+             check = function() return byesHeard > byeMark, ByeDetail() end }
 end
 
 Probe:Steps("logout", {
@@ -915,11 +929,11 @@ Probe:Steps("logout", {
     rev = 1,
     { text = steadyText },
     { text = "On the OTHER account, type /fp las bye. Then press Ready here, and only then type /reload "
-          .. "on the OTHER account.", button = "Ready", run = function() byeMark = byesHeard; return byeMark end },
+          .. "on the OTHER account.", button = "Ready", run = function() byeMark, rawMark = byesHeard, rawByes; return byeMark end },
     ByeWait("/reload"),
     { text = "On the OTHER account, type /fp las bye again. Then press Ready here, and only then log the "
           .. "OTHER account out to the character list (Menu, Log Out; not /reload).", button = "Ready",
-      run = function() byeMark = byesHeard; return byeMark end },
+      run = function() byeMark, rawMark = byesHeard, rawByes; return byeMark end },
     ByeWait("logout to the character list"),
     { text = "Log the OTHER account back in (any character) and /reload there, so its log of both sends "
           .. "is saved. Then /reload here.", reload = true },
@@ -967,7 +981,19 @@ frame:SetScript("OnEvent", function(_, event, ...)
         C_Timer.After(8, Status)
     elseif event == "BN_CHAT_MSG_ADDON" then
         local prefix, text, _, senderID = ...
-        if IsS(prefix) or prefix ~= PROBE_PREFIX then return end
+        if IsS(prefix) then return end
+        if prefix == LAS_PREFIX then
+            -- #38: a bye's single data frame, seen before the library's checks.
+            -- Only its sid is logged, never the MAC or the body.
+            local sid = not IsS(text) and type(text) == "string"
+                and text:match("^D1|Probe|(%d+)|1|1|%x+|BYE|%d+|%d+|%u+|")
+            if sid then
+                rawByes = rawByes + 1
+                Log(("raw bye frame received from id %s, sid %s, before the library's checks"):format(V(senderID), sid))
+            end
+            return
+        end
+        if prefix ~= PROBE_PREFIX then return end
         pingsHeard = pingsHeard + 1
         local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, senderID)
         Log(("PING received from id %s: %s"):format(V(senderID), V(text)))
@@ -992,7 +1018,7 @@ Kinds.OnMessage(OnMessageFor("ProbeST"))
 Msgs.OnMessage(OnMessageFor("ProbeMsg"))
 
 NS._test = { Probe = Probe, Sync = Sync, Kinds = Kinds, Msgs = Msgs, Verdict = Verdict, Padded = Padded,
-             Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end, Byes = function() return byesHeard end,
+             Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end, Byes = function() return byesHeard end, RawByes = function() return rawByes end,
              Round = function() return round end, Tally = function() return Tally() end,
              Handles = function() return handles end, StartHandles = StartHandles,
              ResetHandles = function() handles = nil end }

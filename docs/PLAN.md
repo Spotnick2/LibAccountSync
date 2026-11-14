@@ -158,8 +158,11 @@ Each tag's delivery has one of two meanings, chosen at `New`:
   handed to the client during the event. A queued one is lost with the UI, its `onResult` never
   fired.
   - AltStable measured on 70938 that such a message arrived after a `/reload` and not after a
-    logout to the character list. Whether the client drops a frame it was handed during a logout
-    is what `/fp steps las logout` measures.
+    logout to the character list. `/fp steps las logout` measures where it goes missing: the
+    sender logs whether it was handed to the client during the event, and the receiver counts the
+    raw frame (before the library's checks) apart from the delivery. Handed over but never
+    received is the client's loss; received but not delivered is the receiving library's (its
+    sender's record gone before the frame landed, say).
   - Until then, a host must not depend on a goodbye: a timeout has to end a sender that left
     without one, as AltStable's 50 s silence does.
 - **Reasons, a frozen enum:** `disabled`, `no-peers`, `too-large`, `not-ready`, `offline`,

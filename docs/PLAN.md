@@ -934,3 +934,14 @@ game access until 2026-11-04, so the two-account check waits for that date.
   two-account check (`/fp steps las check`; planned for 2026-11-04, not run then), with §7.11
   measured the same day and §7.9 when a friend can help. Before it (#34): the client moved to
   70938, with nothing this library uses changed, and the probe got its §7.11 watch.
+- In game on 2026-11-14, build 1.60.1.70938, two own accounts (the probe at `edf8a7d`), and
+  tagged `r6` there:
+  - `/fp steps las check`: every payload delivered once and verified byte for byte (Send and
+    `SendTo` 1000 B; `Probe` 4000 B and `ProbeST` 500 B; four messages, each once). `SendTo` to a
+    GUID that isn't a peer sent nothing. The record shows one FAIL, step 9: it was completed by
+    hand at 5 s, and the second result came 0.3 s later.
+  - §7.11, first session (`/fp steps las handles` and the watch): 0 REUSE and 0 DISAGREE over 40
+    changes. The other account, exited to the desktop, kept its id as an offline record with no
+    GUID, and came back 40 s later on the same id. On a client's own new login every friend's id
+    was renumbered, which is why the watch starts afresh at a login. The character switch step was
+    not done (same GUID), so it is still owed.

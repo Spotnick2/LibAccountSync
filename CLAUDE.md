@@ -4,22 +4,20 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
-**MINOR 6 is on `main`, not yet tagged** (#31, the 2026-10-29 audit: the shared stream and byte
-caps make room for Battle.net-verified senders, the own-name check is gone, the friends list is
-walked lazily, the payload hash is cached; PLAN §10 "MINOR 6"). Desk-verified only: `r6` is tagged
-after the two-account check (`/fp steps las check`, planned for 2026-11-04 but not yet run),
-together with the §7.11 handle-reuse measurement (`/fp steps las handles` and the watch, #34) and,
-if a friend can help, the §7.9 relay gate.
-**Status: `r5` released** (tag on `76fedef`, MINOR 5: #18 `messages = true` delivery for
+**Status: `r6` released** (tag on `edf8a7d`, MINOR 6: #31, the 2026-10-29 audit: the shared
+stream and byte caps make room for Battle.net-verified senders, the own-name check is gone, the
+friends list is walked lazily, the payload hash is cached; PLAN §10 "MINOR 6"). It passed the
+two-account check on 2026-11-14, build 70938: every payload delivered and verified byte for byte
+(PLAN §10 has the record). `r5` (`76fedef`, MINOR 5: #18 `messages = true` delivery for
 independent messages, #17 one tag per snapshot kind on a shared store, the stream cap per
-(sender, tag); Codex-reviewed). r5 and `r4` (`830017a`, #14 `SendTo`) passed the two-account
-probe check (`/fp steps las check`, all 9 checks) on 2026-10-16, build 70425, whose documented
-surface is identical to 70450's (#25). `r3` (`6c888c5`, #7 client
+(sender, tag); Codex-reviewed) and `r4` (`830017a`, #14 `SendTo`) passed it on 2026-10-16, build
+70425 (#25). `r3` (`6c888c5`, #7 client
 project/region on a blank first run, #8 `bit`-backed SHA-256) was validated by the two-account probe
 check; `r2` (`fdd4a72`) by GlassChat's pilot (#4). MINOR 1 was never tagged: its pilot copy,
-`cc92deb`, failed the first in-game check (#4). All five are frozen in `tests/fixtures/` (r2-r5 with
+`cc92deb`, failed the first in-game check (#4). All six are frozen in `tests/fixtures/` (r2-r6 with
 manifests).
-Seven of the ten `docs/PLAN.md` §7 measurements are done (#1). **Still owed (#9):** the §7.9 relay
+Seven of the eleven `docs/PLAN.md` §7 measurements are done (#1); §7.11 has a first session (no
+handle reuse, PLAN §10) and its character-switch step is still owed. **Still owed (#9):** the §7.9 relay
 gate (needs a Battle.net friend as the test subject; a positive result brings the deferred relay
 protections into the next MINOR), §7.3 and §7.7. #8 measured: the `bit` path hashes 16 KB in 65 ms and 32 KB
 in 129 ms in game. Scope (owner, 2026-10-05): same-Battle.net-account sync only. `docs/PLAN.md` is the reviewed design (two internal rounds plus

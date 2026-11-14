@@ -141,4 +141,9 @@ pwsh tests/run.ps1                                       # luac -p + every tests
   (compare, truth-test, concatenate): Battle.net records through the readers, everything else
   (event arguments, BNGetInfo, prefix results) with `IsSecret` first.
 - Raise MINOR for every behaviour change, in the same PR; tag the merge commit `rN`.
+- **Every tag gets a GitHub Release** (#21; EMBEDDED-LIBRARIES §9.4): `gh release create rN
+  --verify-tag --title "rN (MINOR N)" --notes-file ...`, with notes written by hand, not
+  `--generate-notes`, under three headings: what changed, what a consumer must do (the pin, any
+  new file or `.pkgmeta` ignore), and what the in-game check showed. The Releases are the
+  library's history (no CHANGELOG). r5 and r6 have one; r2-r4 predate this.
 - Right-size for a single maintainer.

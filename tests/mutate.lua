@@ -318,6 +318,15 @@ local M = {
     { "methods: the frame calls a FontString's SetText", { { '    lib.frame:SetScript("OnEvent", function(_, event, ...)',
         '    lib.frame:SetText("x")\n    lib.frame:SetScript("OnEvent", function(_, event, ...)' } } },
 
+    -- #38, a bye at PLAYER_LOGOUT
+    { "probe: a bye goes out at any logout", { { "    if not byeArmed then return end\n", "" } }, PROBE },
+    { "probe: a bye goes out at every logout", { { "    byeArmed = false\n    local p = FindPeer(nil)", "    local p = FindPeer(nil)" } }, PROBE },
+    { "probe: a held bye reads as handed over", { { 'local during, result = true, "none"', 'local during, result = true, "sent nil during the call"' } }, PROBE },
+    { "probe: any message counts as a bye", { { 'if payload:match("^BYE|%d+|%d+|%u+|") and verdict:find(" OK ", 1, true) then', "if true then" } }, PROBE },
+    { "probe: a bye isn't verified", { { '    if not head then head, n = payload:match("^(BYE|(%d+)|%d+|%u+|)") end\n', "" } }, PROBE },
+    { "probe: the logout wait ignores its mark", { { "if byesHeard > byeMark then return true", "if byesHeard >= byeMark then return true" } }, PROBE },
+    { "probe: Ready doesn't mark", { { 'button = "Ready", run = function() byeMark = byesHeard;', 'button = "Ready", run = function() byeMark = 0;' } }, PROBE },
+
     -- The log reader (test_wirelog)
     { "wirelog: a line without a clock is dropped", { { "if c is None or c[:len(since)] >= since]",
         "if c is not None and c[:len(since)] >= since]" } }, WIRELOG },

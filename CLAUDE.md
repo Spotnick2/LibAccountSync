@@ -55,7 +55,7 @@ adversarial review first.
   in-game probe and its log reader. Never shipped. A ForeverProbe module (`/fp las <command>`,
   `C:\Projects\WoW\References\Docs\PROBES.md`); the deploy installs `..\ForeverProbe` first. Each
   release's two-account check is `/fp steps las check`; PLAN §7.3, §7.9 and §7.11 are `blank`,
-  `relay` and `handles`. §7.11 also runs by itself: every id's GUID and Battle.net account is
+  `relay` and `handles`; `logout` measures a send from `PLAYER_LOGOUT` (#38). §7.11 also runs by itself: every id's GUID and Battle.net account is
   logged as it changes (`handles:` lines, a `REUSE` is the finding), from the first world entry,
   carried over a `/reload`, in `LibAccountSyncProbeDB.handles`.
   After the owner's `/reload` on both accounts, read the results yourself: `read-wirelog.py` (every
@@ -113,7 +113,7 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
 ```
 pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua + test_wirelog.py
 pwsh tests/run.ps1 -KitDev                               # against the ..\WowTestKit working copy
-& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 160)
+& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 167)
 ```
 - The test scaffolding is WowTestKit (`C:\Projects\WoW\WowTestKit`; its README is the reference)
   at the commit and client build `tests\kit.pin` names. `tests\run.ps1` puts that commit in

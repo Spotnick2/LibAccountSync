@@ -232,8 +232,8 @@ local names = {}
 for k in pairs(FP.procedures) do names[#names + 1] = k end
 table.sort(names)
 eq(table.concat(names, ","),
-   "LibAccountSyncProbe/blank,LibAccountSyncProbe/check,LibAccountSyncProbe/handles,LibAccountSyncProbe/relay",
-   "the four procedures are defined")
+   "LibAccountSyncProbe/blank,LibAccountSyncProbe/check,LibAccountSyncProbe/handles,LibAccountSyncProbe/logout,"
+   .. "LibAccountSyncProbe/relay", "the five procedures are defined")
 T.Probe:StartSteps("check")
 local rec = FP.db.steps.records["LibAccountSyncProbe/check"]
 local nSteps = #FP.procedures["LibAccountSyncProbe/check"].steps
@@ -498,6 +498,60 @@ S.Stop()
 WoW.bn.accounts[9] = nil
 WoW.bn.accounts[3] = B.record
 B.record.playerGuid = B.guid
+
+-- 11d. #38: a bye armed for PLAYER_LOGOUT, sent to the first peer, and what
+-- the library did with it during the event.
+T.Sync.Rescan()
+B:deliver(B:hello({ key = B.key }))
+eq(#T.Sync.Peers(), 1, "the other account is a peer for the bye")
+local sentBefore = #WoW.sent
+WoW.fire("PLAYER_LOGOUT")
+eq(#WoW.sent, sentBefore, "nothing is sent at a logout nobody armed")
+las("bye")
+check(logHas("bye: armed"), "/fp las bye arms it")
+WoW.fire("PLAYER_LOGOUT")
+check(logHas('bye at PLAYER_LOGOUT to "Karuzo": SendTo -> 1 nil; onResult sent nil during the call'),
+      "the bye goes out at PLAYER_LOGOUT, handed over during the event")
+local byes = 0
+for _, r in ipairs(B:received("Probe", DB.sync)) do
+    if r.payload:find("^BYE|") and r.macOk and T.Verdict(r.payload) == "BYE OK 60" then byes = byes + 1 end
+end
+eq(byes, 1, "the other account gets one verified bye")
+sentBefore = #WoW.sent
+WoW.fire("PLAYER_LOGOUT")
+eq(#WoW.sent, sentBefore, "  once: the next logout sends nothing")
+WoW.ctlDefer = true                                -- ChatThrottleLib holds it: no result during the event
+las("bye")
+WoW.fire("PLAYER_LOGOUT")
+check(logHas("SendTo -> 1 nil; onResult none;"), "a held bye says so: no result during the event")
+WoW.ctlQueue, WoW.ctlDefer = {}, false             -- the logout tears the queue down
+
+-- Received: a verified bye is counted; anything else is not.
+local function bye(t) return T.Padded(("BYE|60|%d|LOGOUT|"):format(t), 60) end
+local heard = T.Byes()
+B:send("Probe", T.Sized(80), { sid = "1760000000900" })
+eq(T.Byes(), heard, "a message that isn't a bye isn't counted")
+B:send("Probe", bye(1760000001), { sid = "1760000000901" })
+eq(T.Byes(), heard + 1, "a bye is counted")
+check(logHas("BYE OK 60"), "  and verified")
+
+-- The logout procedure: each wait goes on when a bye arrives, and times out
+-- (FAIL) when none does.
+T.Probe:StartSteps("logout")
+rec = FP.db.steps.records["LibAccountSyncProbe/logout"]
+S.Next()
+S.Run()                                            -- 2: armed over there, Ready marks; 3: waiting
+S.Poll()
+eq(rec.at, 3, "the wait holds while no bye has come")
+B:send("Probe", bye(1760000002), { sid = "1760000000902" })
+S.Poll()
+eq(outcome(3), "PASS", "a bye after the /reload: " .. detail(3))
+S.Run()                                            -- 4: Ready marks again; 5: waiting
+WoW.advance(61)
+S.Poll()
+eq(rec.results[5] and rec.results[5].status, "timeout", "no bye after the logout: the wait times out")
+eq(outcome(5), "FAIL", "  as a FAIL: " .. detail(5))
+S.Stop()
 
 -- 12. Clearing empties the bound log in place; the next line lands in both.
 local log = DB.log

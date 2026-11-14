@@ -23,9 +23,10 @@
 --   /fp las presence          BNGetInfo's presenceID vs our bnetAccountID (10)
 --   /fp las handles           every id's GUID and Battle.net account, and any
 --                             REUSE since login (11; watched all session)
+--   /fp las bye               arm one small message for the next logout (#38)
 --   /fp las clear             empty the log
 -- Procedures (/fp steps las <name>): check (a release across two own
--- accounts), blank (7.3), relay (7.9), handles (7.11). Received messages are
+-- accounts), blank (7.3), relay (7.9), handles (7.11), logout (#38). Received messages are
 -- checked and logged as they come, with how long since the last send.
 ----------------------------------------------------------------------------
 
@@ -84,6 +85,7 @@ local function Verdict(payload)
     local head, n = payload:match("^(SIZE|(%d+)|)")
     if not head then head, n = payload:match("^(KIND|(%d+)|%w+|)") end
     if not head then head, n = payload:match("^(MSG|(%d+)|%d+|%d+|%d+|)") end
+    if not head then head, n = payload:match("^(BYE|(%d+)|%d+|%u+|)") end
     if not head then
         local kind = payload:match("^(%u+)|") or "?"
         return kind .. " CORRUPTED"
@@ -249,10 +251,12 @@ end
 
 -- Messages seen this session, per batch: a second delivery of one is logged.
 local seenMsg = {}
+local byesHeard = 0     -- #38: messages the other account sent from its PLAYER_LOGOUT
 
 local function OnMessageFor(tag)
     return function(payload, sender, sid)
         local verdict = Verdict(payload)
+        if payload:match("^BYE|%d+|%d+|%u+|") and verdict:find(" OK ", 1, true) then byesHeard = byesHeard + 1 end
         local batch, i, count = payload:match("^MSG|%d+|(%d+)|(%d+)|(%d+)|")
         if batch then
             local seen = seenMsg[batch] or {}
@@ -581,6 +585,36 @@ local function StartHandles(db, isReloadingUi)
 end
 
 --------------------------------------------------------------------------------
+-- #38: a send from PLAYER_LOGOUT
+--------------------------------------------------------------------------------
+-- Armed by /fp las bye, for this session's next PLAYER_LOGOUT (a /reload, a
+-- logout or an exit all fire it). What is logged says whether the library
+-- handed the frame to the client during the event: ChatThrottleLib sends at
+-- once when it isn't queueing and has bandwidth, and then calls onResult
+-- before SendTo returns, with the client's result. If it did, and the other
+-- account never gets it, the client dropped it, not the library.
+
+local BYE_SIZE = 60
+local byeArmed = false
+
+local function ByeAtLogout()
+    if not byeArmed then return end
+    byeArmed = false
+    local p = FindPeer(nil)
+    if not p then Log("bye at PLAYER_LOGOUT: no peer, nothing sent"); return end
+    local payload = Padded(("BYE|%d|%d|LOGOUT|"):format(BYE_SIZE, time()), BYE_SIZE)
+    local during, result = true, "none"
+    local count, why = Sync.SendTo(p.guid, payload, function(_, status, reason)
+        result = ("%s %s %s"):format(status, tostring(reason), during and "during the call" or "after it")
+    end)
+    during = false
+    local ctl = rawget(_G, "ChatThrottleLib")
+    local queueing = type(ctl) == "table" and tostring(rawget(ctl, "bQueueing")) or "?"
+    Log(("bye at PLAYER_LOGOUT to %s: SendTo -> %s %s; onResult %s; ChatThrottleLib queueing %s"):format(
+        V(p.name), tostring(count), tostring(why), result, queueing))
+end
+
+--------------------------------------------------------------------------------
 -- Commands
 --------------------------------------------------------------------------------
 
@@ -599,6 +633,10 @@ Probe:Command("ping", function(arg) Ping(arg) end, "<id>: a raw ping on the prob
 Probe:Command("presence", function() Presence() end, "BNGetInfo's presenceID vs our bnetAccountID")
 Probe:Command("handles", function() Handles("command"); HandlesSummary() end,
     "every id's GUID and Battle.net account, and any REUSE since login (7.11)")
+Probe:Command("bye", function()
+    byeArmed = true
+    Log("bye: armed, one " .. BYE_SIZE .. "-byte message to the first peer at this session's PLAYER_LOGOUT")
+end, "arm one small message for this session's next logout or /reload (#38)")
 Probe:Command("clear", function() Probe:ClearLog(); Log("log cleared") end, "empty the saved log")
 
 --------------------------------------------------------------------------------
@@ -855,6 +893,38 @@ Probe:Steps("handles", {
       reload = true },
 })
 
+-- #38, run on the account that STAYS in game: the other one arms a bye
+-- (/fp las bye) and leaves, once by /reload, once by a logout to the
+-- character list. Each wait step goes on by itself when the bye arrives; a
+-- timeout (FAIL) means it never came. The other account's own log, saved by
+-- that same logout, says whether the library handed it to the client.
+local byeMark = 0
+local function ByeWait(how)
+    return { text = "Waiting for the other account's bye after its " .. how .. ". This step goes on by itself "
+                 .. "when it arrives.",
+             wait = function()
+                 if byesHeard > byeMark then return true, how .. ": arrived" end
+                 return false, "no bye yet"
+             end,
+             timeout = 60,
+             check = function() return byesHeard > byeMark, byesHeard - byeMark .. " bye(s) since the mark" end }
+end
+
+Probe:Steps("logout", {
+    title = "#38: a message sent at PLAYER_LOGOUT, after a /reload and after a logout",
+    rev = 1,
+    { text = steadyText },
+    { text = "On the OTHER account, type /fp las bye. Then press Ready here, and only then type /reload "
+          .. "on the OTHER account.", button = "Ready", run = function() byeMark = byesHeard; return byeMark end },
+    ByeWait("/reload"),
+    { text = "On the OTHER account, type /fp las bye again. Then press Ready here, and only then log the "
+          .. "OTHER account out to the character list (Menu, Log Out; not /reload).", button = "Ready",
+      run = function() byeMark = byesHeard; return byeMark end },
+    ByeWait("logout to the character list"),
+    { text = "Log the OTHER account back in (any character) and /reload there, so its log of both sends "
+          .. "is saved. Then /reload here.", reload = true },
+})
+
 --------------------------------------------------------------------------------
 -- Events and the instances
 --------------------------------------------------------------------------------
@@ -866,7 +936,7 @@ local isHandleEvent = {}
 for _, e in ipairs(HANDLE_EVENTS) do isHandleEvent[e] = true end
 
 local frame = CreateFrame("Frame")
-local events = { "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "BN_CHAT_MSG_ADDON" }
+local events = { "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_LOGOUT", "BN_CHAT_MSG_ADDON" }
 for _, e in ipairs(HANDLE_EVENTS) do events[#events + 1] = e end
 Probe:RegisterEvents(frame, events)
 frame:SetScript("OnEvent", function(_, event, ...)
@@ -887,6 +957,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         Probe:UseLog(db.log, MAX_LOG)                  -- from here on, lines are saved too
         db.loads = (db.loads or 0) + 1
         Log(("loaded (%d loads), LibAccountSync r%s. /fp las for the commands"):format(db.loads, tostring(Minor())))
+    elseif event == "PLAYER_LOGOUT" then
+        ByeAtLogout()
     elseif event == "PLAYER_LOGIN" then
         C_ChatInfo.RegisterAddonMessagePrefix(PROBE_PREFIX)
         for _, s in ipairs({ 5, 15, 30, 60, 90 }) do
@@ -920,7 +992,7 @@ Kinds.OnMessage(OnMessageFor("ProbeST"))
 Msgs.OnMessage(OnMessageFor("ProbeMsg"))
 
 NS._test = { Probe = Probe, Sync = Sync, Kinds = Kinds, Msgs = Msgs, Verdict = Verdict, Padded = Padded,
-             Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end,
+             Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end, Byes = function() return byesHeard end,
              Round = function() return round end, Tally = function() return Tally() end,
              Handles = function() return handles end, StartHandles = StartHandles,
              ResetHandles = function() handles = nil end }

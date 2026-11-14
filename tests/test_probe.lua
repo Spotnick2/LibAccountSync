@@ -423,6 +423,16 @@ WoW.bn.accounts[8].playerGuid = "Player-1-00000088"
 WoW.advance(30)
 check(logHas("-> online Player-1-00000088 " .. bt("Other#10") .. "(guid) (sweep)"), "the sweep reads without an event")
 
+-- Our own tag turning secret changes no account (Codex on #35): an account's
+-- key is its tag's hash, and which one is ours is learned apart.
+WoW.bn.secretSelfTag = true
+B.record.playerGuid = "Player-1-00000031"
+bnEvent("BN_INFO_CHANGED"); WoW.advance(1)
+check(logHas("-> online Player-1-00000031 own(guid) (BN_INFO_CHANGED)"), "with our tag secret, ours is still own")
+WoW.bn.secretSelfTag = false
+bnEvent("BN_INFO_CHANGED"); WoW.advance(1)
+eq(H.reuse, 2, "our tag turning secret and back is no REUSE")
+
 -- Secret fields: nothing throws, and nothing secret is a change of account.
 WoW.bn.secret = { characterName = true, playerGuid = true, isOnline = true, clientProgram = true, battleTag = true }
 check(not errs(las, "handles"), "/fp las handles survives secret fields")
@@ -434,9 +444,22 @@ T.ResetHandles()
 T.StartHandles(DB, true)
 check(T.Handles() == H and H.reuse == 2, "a /reload carries the watch over, REUSEs included")
 check(logHas("handles: carried over a /reload"), "  and says so")
+WoW.bn.secretSelfTag = true                        -- our tag secret across a /reload
 T.ResetHandles()
-T.StartHandles(DB, false)
+T.StartHandles(DB, true)
+B.record.playerGuid = "Player-1-00000032"
+bnEvent("BN_INFO_CHANGED"); WoW.advance(1)
+check(logHas("-> online Player-1-00000032 own(guid) (BN_INFO_CHANGED)"), "a /reload keeps our key while our tag is secret")
+eq(H.reuse, 2, "  and counts no REUSE")
+T.ResetHandles()
+T.StartHandles(DB, false)                          -- a login, our tag still secret
 check(T.Handles() ~= H and T.Handles().reuse == 0 and DB.handles == T.Handles(), "a login starts afresh")
+check(logHas("handles: id 3 nothing -> online Player-1-00000032 " .. bt("Owner#1") .. "(guid) (login)"),
+      "with our tag secret at login, ours shows as its key")
+WoW.bn.secretSelfTag = false
+bnEvent("BN_INFO_CHANGED"); WoW.advance(1)
+eq(T.Handles().reuse, 0, "learning our key later is no REUSE")
+check(not logHas("Player-1-00000032 " .. bt("Owner#1") .. "(guid) ->"), "  nor a change")
 
 -- 11c. The handles procedure: the other account pinned, switching
 -- character, leaving the game and coming back on another id.

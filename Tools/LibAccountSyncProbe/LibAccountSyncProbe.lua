@@ -419,26 +419,33 @@ end
 -- session, so what was seen is carried over in the saved table; a login
 -- starts afresh, since handles may be renumbered then.
 --
--- An account is "own" (our BattleTag) or "bt:" and 8 hex of its BattleTag's
--- SHA-256: the log tells accounts apart without holding a friend's tag.
+-- An account's key is "bt:" and 8 hex of its BattleTag's SHA-256: the log
+-- tells accounts apart without holding a friend's tag. Ours is learned
+-- whenever BNGetInfo's tag is readable and kept (ownKey), and shown as "own";
+-- the key itself never depends on it, so our tag turning secret is no REUSE
+-- (Codex on #35).
 
-local handles      -- the saved db.handles: { seen = { [id] = h }, since, changes, reuse, disagree }
+local handles      -- the saved db.handles: { seen = { [id] = h }, since, changes, reuse, disagree, ownKey }
 
 local function FreshHandles()
     return { seen = {}, since = date("%Y-%m-%d %H:%M:%S"), changes = 0, reuse = 0, disagree = 0 }
 end
 
-local tagLabels = {}
-local function TagLabel(tag)
+local tagKeys = {}
+local function TagKey(tag)
     if IsS(tag) or type(tag) ~= "string" or tag == "" then return nil end
-    local _, _, own = pcall(BNGetInfo)
-    if not IsS(own) and own == tag then return "own" end
-    local l = tagLabels[tag]
-    if not l then
-        l = "bt:" .. LibStub("LibAccountSync-1.0")._test.SHA256(tag):sub(1, 8)
-        tagLabels[tag] = l
+    local k = tagKeys[tag]
+    if not k then
+        k = "bt:" .. LibStub("LibAccountSync-1.0")._test.SHA256(tag):sub(1, 8)
+        tagKeys[tag] = k
     end
-    return l
+    return k
+end
+
+-- A key as the log shows it: ours is "own".
+local function Label(k)
+    if k ~= nil and handles and k == handles.ownKey then return "own" end
+    return k
 end
 
 -- Each friend's game account ids, to that friend's account: the only owner a
@@ -449,7 +456,7 @@ local function FriendAccounts()
     if not ok or IsS(n) or type(n) ~= "number" then return map end
     for i = 1, n do
         local okA, a = pcall(C_BattleNet.GetFriendAccountInfo, i)
-        local label = okA and not IsS(a) and type(a) == "table" and TagLabel(a.battleTag) or nil
+        local label = okA and not IsS(a) and type(a) == "table" and TagKey(a.battleTag) or nil
         local okN, m = pcall(C_BattleNet.GetFriendNumGameAccounts, i)
         if label and okN and not IsS(m) and type(m) == "number" then
             for j = 1, m do
@@ -479,7 +486,7 @@ local function HandleNow(id, g, friends)
         h.guid = guid
         local ok, a = pcall(C_BattleNet.GetAccountInfoByGUID, guid)
         if ok and not IsS(a) and type(a) == "table" then
-            h.acct = TagLabel(a.battleTag)
+            h.acct = TagKey(a.battleTag)
             if h.acct then h.src = "guid" end
         end
     end
@@ -489,15 +496,20 @@ local function HandleNow(id, g, friends)
     return h
 end
 
+-- An id as the log shows it. The old and the new record are both shown with
+-- the key we hold now, so learning our key later is no change.
 local function Describe(h)
     if not h then return "nothing" end
-    return ("%s %s %s%s"):format(h.state, h.guid or "no-guid", h.acct or "?",
-        h.src and ("(" .. h.src .. ")") or (h.last and ("(last " .. h.last .. ")") or ""))
+    return ("%s %s %s%s"):format(h.state, h.guid or "no-guid", Label(h.acct) or "?",
+        h.src and ("(" .. h.src .. ")") or (h.last and ("(last " .. Label(h.last) .. ")") or ""))
 end
 
 -- Reads every id and logs what changed since the last read.
 local function Handles(why)
     if not handles then return end
+    local _, _, ownTag = pcall(BNGetInfo)
+    local ownKey = TagKey(ownTag)
+    if ownKey then handles.ownKey = ownKey end
     local friends = FriendAccounts()
     local seen = handles.seen
     for id = 1, 128 do
@@ -511,12 +523,12 @@ local function Handles(why)
             local reuse = now.acct and last and now.acct ~= last
             if reuse then
                 handles.reuse = handles.reuse + 1
-                Log(("handles: REUSE id %d, %s -> %s (%s)"):format(id, last, now.acct, why))
+                Log(("handles: REUSE id %d, %s -> %s (%s)"):format(id, Label(last), Label(now.acct), why))
             end
             if now.other and not (old and old.other == now.other) then
                 handles.disagree = handles.disagree + 1
-                Log(("handles: DISAGREE id %d, its GUID says %s, the friends list %s (%s)"):format(id, now.acct,
-                    now.other, why))
+                Log(("handles: DISAGREE id %d, its GUID says %s, the friends list %s (%s)"):format(id,
+                    Label(now.acct), Label(now.other), why))
             end
             local was, is = Describe(old), Describe(now)
             if was ~= is then
@@ -783,7 +795,7 @@ local function OtherOwn()
     local ids = {}
     for id = 1, 128 do
         local h = handles and handles.seen[id]
-        if h and h.acct == "own" and h.guid and h.guid ~= mine and h.state == "online" then ids[#ids + 1] = id end
+        if h and h.acct ~= nil and h.acct == handles.ownKey and h.guid and h.guid ~= mine and h.state == "online" then ids[#ids + 1] = id end
     end
     return ids
 end
@@ -802,7 +814,7 @@ end
 
 Probe:Steps("handles", {
     title = "PLAN 7.11: game account id handles over a session",
-    rev = 1,
+    rev = 2,
     { text = steadyText },
     { text = "Reading every id, and pinning the one your other account holds.", button = "Pin",
       run = function()

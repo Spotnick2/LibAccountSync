@@ -291,7 +291,7 @@ local M = {
         'local last = old and old.state ~= "gone" and (old.acct or old.last) or nil' } }, PROBE },
     { "probe: the friends list isn't read", { { "    local friends = FriendAccounts()", "    local friends = {}" } }, PROBE },
     { "probe: a friend's BattleTag is logged", {
-        { '        l = "bt:" .. LibStub("LibAccountSync-1.0")._test.SHA256(tag):sub(1, 8)', "        l = tag" } }, PROBE },
+        { '        k = "bt:" .. LibStub("LibAccountSync-1.0")._test.SHA256(tag):sub(1, 8)', "        k = tag" } }, PROBE },
     { "probe: a disagreement is counted at every read", { { "if now.other and not (old and old.other == now.other) then",
         "if now.other then" } }, PROBE },
     { "probe: Battle.net events aren't watched", {
@@ -304,6 +304,10 @@ local M = {
     { "probe: a login carries over", { { "if isReloadingUi == true and type(db.handles) == \"table\"",
         "if type(db.handles) == \"table\"" } }, PROBE },
     { "probe: every world entry restarts the watch", { { "    if handles then return end\n    if isReloadingUi", "    if isReloadingUi" } }, PROBE },
+    { "probe: the account key depends on our tag", { { "    local k = tagKeys[tag]",
+        '    local _, _, own = pcall(BNGetInfo)\n    if not IsS(own) and own == tag then return "own" end\n    local k = tagKeys[tag]' } }, PROBE },
+    { "probe: our key is forgotten while our tag is secret", { { "if ownKey then handles.ownKey = ownKey end",
+        "handles.ownKey = ownKey" } }, PROBE },
     { "probe: 7.11 takes no switch", { { " and h.guid ~= handlePin.guid,", "," } }, PROBE },
     { "probe: 7.11 takes an account still in the game", { { "check = function() return #OtherOwn() == 0, PinnedNow() end },",
         "check = function() return true, PinnedNow() end }," } }, PROBE },

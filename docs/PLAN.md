@@ -152,6 +152,19 @@ Each tag's delivery has one of two meanings, chosen at `New`:
   - `"failed"` with a reason as soon as any chunk fails.
 
   `"sent"` means handed to the wire, never "delivered". There is no acknowledgement in r1.
+- **A send from `PLAYER_LOGOUT`** (#38). The library doesn't handle the event, so its state is
+  intact while a host's handler runs. ChatThrottleLib sends a frame at once when it isn't queueing
+  and has bandwidth, and then `onResult` fires before `Send` returns: a small message is usually
+  handed to the client during the event. A queued one is lost with the UI, its `onResult` never
+  fired.
+  - AltStable measured on 70938 that such a message arrived after a `/reload` and not after a
+    logout to the character list. `/fp steps las logout` measures where it goes missing: the
+    sender logs whether it was handed to the client during the event, and the receiver counts the
+    raw frame (before the library's checks) apart from the delivery. Handed over but never
+    received is the client's loss; received but not delivered is the receiving library's (its
+    sender's record gone before the frame landed, say).
+  - Until then, a host must not depend on a goodbye: a timeout has to end a sender that left
+    without one, as AltStable's 50 s silence does.
 - **Reasons, a frozen enum:** `disabled`, `no-peers`, `too-large`, `not-ready`, `offline`,
   `no-route`.
 

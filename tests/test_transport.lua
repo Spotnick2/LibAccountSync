@@ -159,8 +159,9 @@ do
     eq(box[1] and box[1].payload, "waited", "delivered once Battle.net verifies the sender")
 end
 
--- 7b'. The same on first contact: no key learned yet, so no MAC can be
---      checked, and Battle.net's word alone delivers it (Codex, r1 round 3).
+-- 7b'. First contact: no key trusted yet, so no MAC verifies. Battle.net's
+--      word alone no longer delivers it (MINOR 7, #37): it waits for the
+--      key-bearing hello, which makes the key trusted, then goes.
 do
     local lib, inst, store = session()
     local box = inbox(inst)
@@ -170,7 +171,9 @@ do
     eq(#box, 0, "nothing while the sender is blank and unproven")
     B:setBlank(false)
     WoW.advance(11)
-    eq(box[1] and box[1].payload, "first contact", "delivered once Battle.net verifies the sender, with no key trusted")
+    eq(#box, 0, "Battle.net verifying the sender isn't enough without a trusted key (MINOR 7)")
+    B:deliver(B:hello({ key = B.key }))
+    eq(box[1] and box[1].payload, "first contact", "delivered once its key-bearing hello makes the key trusted")
     eq(box[1] and box[1].sender.proven, "bnet", "  as verified by Battle.net")
 end
 
@@ -197,7 +200,6 @@ end
 do
     local lib, inst, store, A = verified()
     local box = inbox(inst)
-    lib.state.lastGuid[3] = nil               -- A known through data alone
     A:send("GlassChat", "A newer", { sid = "1760000000002" })
     eq(#box, 1, "(a) A's newer snapshot lands")
     A:setBlank(true)
@@ -259,7 +261,8 @@ do
     eq(box[2] and box[2].sender.name, "Bravo", "the new character's own stream is delivered as it")
 end
 
--- 8. A complete stream whose hello never comes is dropped after 10 s.
+-- 8. A complete stream whose hello never comes is dropped after 30 s
+--    (MINOR 7: 10 s before; a record was measured 13 s behind a relog).
 do
     local store = seasoned()
     local lib, inst = session(store, { before = function() WoW.bn.blank = true end })
@@ -267,9 +270,20 @@ do
     local B = Peer.new({ blank = true })
     inst.Rescan()
     B:send("GlassChat", "late")
-    WoW.advance(11)
+    WoW.advance(31)
     B:deliver(B:hello())
-    eq(#box, 0, "a stream that waited past 10 s for its hello is gone")
+    eq(#box, 0, "a stream that waited past 30 s for its hello is gone")
+end
+do
+    local store = seasoned()
+    local lib, inst = session(store, { before = function() WoW.bn.blank = true end })
+    local box = inbox(inst)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()
+    B:send("GlassChat", "late")
+    WoW.advance(20)
+    B:deliver(B:hello())
+    eq(box[1] and box[1].payload, "late", "one whose hello comes after 20 s is still delivered")
 end
 
 -- 9. Pipes, trailing pipes and empty payloads round-trip both ways.

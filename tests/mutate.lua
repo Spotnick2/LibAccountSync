@@ -22,6 +22,27 @@ end
 local PROBE = "Tools/LibAccountSyncProbe/LibAccountSyncProbe.lua"
 local WIRELOG = "Tools/read-wirelog.py"
 local M = {
+    -- No delivery without its MAC (MINOR 7, #37; test_switch)
+    { "MAC: Battle.net's word delivers again", {
+        { "            sender, k = I.Verify(buf, S.myNonce[id], I.Self(), now, buf.peer)\n",
+          "            sender, k = I.Verify(buf, S.myNonce[id], I.Self(), now, buf.peer)\n            if not sender and now and now.proven == \"bnet\" then sender = now end\n" } } },
+    { "MAC: the admission binding is no candidate", { { "I.Verify(buf, S.myNonce[id], I.Self(), now, buf.peer)",
+        "I.Verify(buf, S.myNonce[id], I.Self(), now)" } } },
+    { "MAC: a forget pins nothing", { { "                if sender then buf.as, buf.asKey = sender, k end\n", "" } } },
+    { "MAC: a scan forgets without the new binding", { { "then I.ForgetId(id, now) else known[id] = true end",
+        "then I.ForgetId(id) else known[id] = true end" } } },
+    { "MAC: a route check forgets without its binding", { { "        I.ForgetId(id, g)", "        I.ForgetId(id)" } } },
+    { "MAC: a second forget drops a pinned stream", { { "            if buf.as then pinned = true else S.buffers[key] = nil end",
+        "            if buf.as and nonce then pinned = true else S.buffers[key] = nil end" } } },
+    { "MAC: pinned streams are delivered mid-transition", {
+        { "        C_Timer.After(0, function()\n            if not Ready() then return end\n            return lib.impl.RecheckAwaiting(id)\n        end)",
+          "        I.RecheckAwaiting(id)" } } },
+    { "MAC: a pin made inside GameFor is ignored", { { "        if buf.as then\n            sender, k = buf.as, buf.asKey\n        elseif",
+        "        if false then\n            sender, k = buf.as, buf.asKey\n        elseif" } } },
+    { "MAC: the wait stays 10 s", { { "local AWAIT_HELLO = 30", "local AWAIT_HELLO = 10" } } },
+    { "MAC: hashed with no candidate to check", { { "    local tried, keys = {}, nil\n",
+        "    buf.hash = buf.hash or SHA256(buf.payload)\n    local tried, keys = {}, nil\n" } } },
+
     -- Ownership fails closed (§5.1, §5.2)
     { "friends list: no settle wait", { { "if (time() - S.upSince) < FRIENDS_SETTLE then return nil end", "" } } },
     { "friends list: a gap is skipped", {
@@ -71,25 +92,22 @@ local M = {
         { "if IsSecret(prefix) or IsSecret(text) or IsSecret(senderID) or prefix ~= PREFIX then",
           "if prefix ~= PREFIX or IsSecret(text) or IsSecret(senderID) then" } } },
     { "a changed character's stream is delivered as the new one", {
-        { "    if was and was.proven == \"bnet\" and (not now or now.guid == was.guid) then",
-          "    if now and now.proven == \"bnet\" then" } } },
+        { "                    return c, k\n", "                    return (select(1, ...)) or c, k\n" } } },
     { "a stale hello's nonce is kept", {
         { "    if g and guid ~= g.playerGuid then return end\n", "" } } },
     { "a late store is not synced", { { "    if I.OwnKey() then I.SyncStores() end", "    I.OwnKey()" } } },
     { "the store's switch wins over the session's", { { "    if inst.enabled ~= nil then return inst.enabled end\n", "" } } },
     { "a proven peer passes without a MAC", {
-        { "    elseif now and S.myNonce[id] and buf.mac then",
-          "    elseif now then\n        sender = now\n    elseif now and S.myNonce[id] and buf.mac then" } } },
+        { "            if not sender then return false end\n",
+          "            if not sender and now and now.proven ~= \"bnet\" then sender = now end\n            if not sender then return false end\n" } } },
     { "a verified sender passes whatever its prior character", {
-        { 'elseif now and now.proven == "bnet" and buf.prior == now.guid then',
-          'elseif now and now.proven == "bnet" then' } } },
-    { "a binding authenticated by data is not recorded", {
-        { "        S.learned[id] = nil      -- Battle.net speaks for this id now\n        I.NoteBinding(id, g.playerGuid)\n",
-          "        S.learned[id] = nil      -- Battle.net speaks for this id now\n" } } },
-    { "a pending unbound stream keeps no identity", {
-        { "        if b.id == id and b.prior == nil then b.prior = guid end", "" } } },
-    { "a known sender gone blank counts as first contact", {
-        { "                prior = (p and p.guid) or S.lastGuid[id] }", "                prior = p and p.guid }" } } },
+        { "            if not sender then return false end\n",
+          "            if not sender and buf.peer and buf.peer.proven == \"bnet\" then sender = buf.peer end\n            if not sender then return false end\n" } } },
+    -- (MINOR 7 removed the per-id binding history, NoteBinding, buf.prior and
+    -- S.lastGuid, with the MAC-free delivery it served. Its three mutations,
+    -- "a binding authenticated by data is not recorded", "a pending unbound
+    -- stream keeps no identity" and "a known sender gone blank counts as first
+    -- contact", went with it; the "MAC:" mutations cover what replaced it.)
     { "our hello carries only the first name", {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then\n        return name .. " " .. second\n    end\n', '' } } },
     { "a verified hello matched by name", {
@@ -104,7 +122,7 @@ local M = {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
           '    if second ~= nil and second ~= "" then' } } },
     { "MINOR not raised over the pilot copy", {
-        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 6', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 7', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
     -- (No "MINOR left at 2" mutation: that is what test_upgrade 4d's freeze
     -- guard catches in a normal run, since r2's manifest no longer matches,
     -- and that guard is off here because every mutant differs from r2.)
@@ -135,8 +153,8 @@ local M = {
     { "MAC without the sender GUID", {
         { 'DATA_DOMAIN .. receiverNonce .. "|" .. senderGuid .. "|" .. tostring(project)',
           'DATA_DOMAIN .. receiverNonce .. "|" .. tostring(project)' } } },
-    { "the MAC is not checked", { { "buf.tag, buf.sidText, buf.n, hash) == buf.mac then",
-                                    "buf.tag, buf.sidText, buf.n, hash) ~= nil then" } } },
+    { "the MAC is not checked", { { "buf.tag, buf.sidText, buf.n, buf.hash) == buf.mac then",
+                                    "buf.tag, buf.sidText, buf.n, buf.hash) ~= nil then" } } },
     { "a complete stream is not kept for its hello", {
         { "    if S.buffers[key] == buf then I.ArmSettle(key, buf) end\n", "    S.buffers[key] = nil\n" } } },
     { "a completed stream delivered ahead of waiting ones", {

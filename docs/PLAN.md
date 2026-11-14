@@ -206,8 +206,9 @@ sync).
 - One handler per instance. It is called as `fn(payload, sender, sid)`.
 - **`sender` comes only from Blizzard's `senderID`**, resolved through the Battle.net record or
   through a proven hello (§5). It is **never taken from a field inside the data frame**.
-  - It is captured when the stream is admitted, so a sender who sends and logs out straight away
-    still gets delivered.
+  - It is the character whose GUID the stream's MAC verifies (MINOR 7, §5.3): the binding now,
+    or the one when the stream was admitted, so a sender who sends and logs out (or switches
+    character) straight away still gets delivered as itself.
   - Each call gets a fresh table, so a host can't change library state through it.
   - `sender.proven` says how ownership was established:
     - `"bnet"`: Battle.net shows the id as ours;
@@ -536,37 +537,29 @@ cut to 32 hex, on chunk 1.
   - Only the receiver knows whether it sees the sender as verified. A sender that left the MAC
     out "because it saw the receiver as verified" would have its streams dropped silently
     whenever the two presences differ (found in round 2).
-- **The receiver decides at completion, not at the first frame:**
-  - a sender **verified by Battle.net** is accepted with the MAC unchecked only if it is **the same
-    character** throughout (r1, after Codex's PR #3 rounds):
-    - each id remembers every character authenticated for it this session, however it was
-      authenticated (`NoteBinding`);
-    - a stream records the character bound when it began, or else the first one authenticated
-      after;
-    - it passes without the MAC when that character is the one Battle.net verified then and is
-      still there (or has logged out since: send-then-logout still delivers, as §1 promises), or
-      is the one Battle.net verifies now;
-    - after any change of character on that account, the MAC decides, bound to the GUID shown
-      now, so an older character's stream can't slip under a new one's sid floor;
-    - **stated limit:** a stream begun while its sender was blank and never identified is credited
-      to the first character authenticated for that id after it. Ownership holds (Battle.net
-      verifies the game account as ours), and an unidentified sender had no floor to bypass;
-    - **stated assumption (#31):** "or has logged out since" reads a missing binding as the
-      account having left. If the client ever reassigned a game account id handle to **another**
-      Battle.net account while one of its streams is open, that account could complete the stream
-      unchecked, credited to the old character (it would also need the open stream's tag, sid and
-      `n`). Whether a handle is reused within a session is unmeasured (§7.11). A record check
-      would not be fail-closed, since a reassigned handle can read missing, offline or blank, and
-      the 2 s rescan on `BN_INFO_CHANGED` does not bound the window (a last chunk can land first),
-      so the assumption is documented and measured, not coded (audit 2026-10-29, Codex agreed);
-  - any other sender is delivered only if it has a **proven hello at completion** and the MAC
-    verifies under a trusted key with **our current nonce for that id**;
+- **The receiver decides at completion, not at the first frame, and only by the MAC** (MINOR 7,
+  #37; before it, a sender Battle.net verified was believed with the MAC unchecked, which credited
+  a new character's stream to the old one while the record lagged a relog):
+  - a stream is delivered as the first candidate whose GUID the MAC verifies, under a trusted key
+    and **our current nonce for that id**: the binding now (Battle.net's record, or a proven
+    hello), then the binding when the stream was admitted. An old character's last stream stays
+    its own after the record names the next one; a new character's stream waits until the record
+    or its own proof hello names it;
   - a sender that isn't verified may fill a buffer only if we have sent that id our nonce. The
     caps bound the memory;
-  - **a complete stream whose sender isn't proven yet is kept, not dropped.** It waits as
-    "awaiting hello" for up to 10 s, within the same caps, and is re-checked whenever a hello from
-    that id is believed. It is delivered if the check passes, and dropped at the timeout or when
-    the binding changes (Codex round 3).
+  - **a complete stream that doesn't verify yet is kept, not dropped.** It waits for up to 30 s,
+    within the same caps, and is re-checked whenever a hello from that id is believed, at the end
+    of the wait, and when the id is forgotten (`ForgetId`): there it is verified first, while the
+    nonce is still in place, against the new binding the caller read and its admission binding;
+    one that verifies is pinned to that sender and delivered on the next frame, through the same
+    ordered drain (Codex review of MINOR 7, rounds 2-4);
+  - nothing is delivered on Battle.net's word alone any more, so the #31 assumption (a reassigned
+    handle completing a stream unchecked) no longer applies;
+  - **stated losses** (MINOR 7): a stream MAC'd under our previous nonce (after any session reset:
+    our `/reload`, the library switched off and on, a Battle.net disconnect, a forget of that id);
+    first contact waits for the key-bearing hello instead of Battle.net's word; a stream the old
+    character sent that is admitted only after the record names the new one; and complete streams
+    that can't verify hold their slots up to 30 s (the full list: §10, "MINOR 7").
 
   Together these let a blank-presence peer's data land however it interleaves with the last
   hello of the handshake: some chunks before the hello, or every chunk before it (Battle.net is
@@ -958,3 +951,126 @@ game access until 2026-11-04, so the two-account check waits for that date.
     GUID, and came back 40 s later on the same id. On a client's own new login every friend's id
     was renumbered, which is why the watch starts afresh at a login. The character switch step was
     not done (same GUID), so it is still owed.
+
+### MINOR 7: every delivery proven by its MAC (#37)
+Reported by AltStable on 70938: after a character switch, a message from the new character was
+handed to `OnMessage` as the old one, 13 s later. Reproduced at the desk (2026-11-14):
+- **Battle.net vouched at admission (the bug).** The other account is bound by Battle.net to G1.
+  It switches to G2, but our record of its id still names G1 (a record lags a relog; the 13 s
+  measured fits). G2's hello is dropped, since it contradicts Battle.net (`OnHello`: a delayed
+  hello from the character that was there before must not replace the current one's nonce,
+  Codex round 2 of r1). G2's stream is admitted under G1, and `TryDeliver`'s first branch
+  delivers it **as G1, without its MAC**: Battle.net vouched for G1 when the stream began, and
+  shows G1 (or, if the record went blank meanwhile, nobody) at completion. Its MAC binds G2.
+- **The second branch does the same** (Codex review round 1): a stream admitted while the record
+  was blank, with G1 as `prior`, completes while the stale record names G1 again, and is credited
+  to G1 unchecked.
+- **A blank presence (correct today).** Bound to G1 by key or proof, the stream from G2 fails its
+  MAC under G1 and waits; G2's proof hello rebinds the id, and the stream is delivered as G2.
+
+Ownership holds: Battle.net verified the game account as ours. What is wrong is the character:
+the snapshot floor and a host's per-character data go under G1. A first proposal (remember a
+dropped hello's GUID and let the MAC decide when one exists) was rejected in review: it missed
+the second branch, and data completing before the contradicting hello stayed misattributed; no
+grace window fixes that, since Battle.net is unordered.
+
+**Proposal: no delivery without its MAC.**
+1. `TryDeliver` has one rule. The candidates are the binding now (`GameFor(id)`), then the binding
+   at admission (`buf.peer`) when its GUID differs. The stream is delivered as the first candidate
+   whose GUID the MAC verifies, under a trusted key and our current nonce for that id (the formula
+   is unchanged, §5.3), and the sender is that candidate's record (name, realm, faction and
+   `proven` as Battle.net or the hello gave them). No candidate verifies: it waits.
+   - G1's own last stream (send, then log out or switch) still goes out as G1: the binding at
+     admission verifies it even after the record names G2.
+   - G2's stream admitted under a stale G1 verifies under neither while the record lags, waits,
+     and is delivered as G2 once the record or G2's proof hello names it.
+2. Rechecks of waiting streams: when a hello is believed (as today), at the end of the wait (as
+   today), and, new, **whenever an id is forgotten** (`ForgetId`: a scan finding a changed or gone
+   binding, a route check before a send, a learned binding gone). Today the forget drops the
+   streams, which would lose G2's stream exactly when the record catches up. Now, in this order
+   (Codex round 2: the drain runs host code, and a handler that sends or switches the library off
+   must never see half a transition):
+   - **verify**, with the nonce still in place, each complete stream of that id against the new
+     binding, when the caller has one (a scan passes `fresh[id]`, `Route` the record it just read;
+     Codex round 3), and its admission binding. Pure: no handler, no floor, no trust refresh, and
+     `me` (project, region) read before the transition, never through `I.Self()`, which can save;
+   - **pin** each stream that verified to its sender (`buf.as`) and leave it in `S.buffers`;
+     **forget** as today, except that the pinned streams stay (the rest of the buffers, the nonces,
+     the learned binding go), and let the caller finish its own transition (a scan rebuilds
+     `S.peers`);
+   - **drain** that id on the next frame (`C_Timer.After(0)`, through `lib.impl`). A pinned stream
+     is delivered as its pinned sender with no second MAC check (its nonce is gone), through the
+     usual floor or message window and enabled check, and refreshes trust then. Because pinned
+     streams stay in `S.buffers`, every delivery still goes through the one ordered drain, sorted
+     by completion: a later stream of the new binding completing before that frame can't overtake
+     one already verified (Codex round 3). A session wipe clears `S.buffers`, pinned streams with
+     them, so nothing is delivered after it; each handler's own effects (a send, switching off) are
+     seen by the next stream's checks.
+
+   A stream so delivered after its id stopped being ours was proven by its own character's MAC,
+   under our nonce, before the forget: the old character's last words, as send-then-logout already
+   allows. It never makes the id a destination again.
+3. The wait for a complete stream (`AWAIT_HELLO`) goes from 10 s to 30 s, past the 13 s measured,
+   within the same caps.
+
+**What it costs (a contract change, MINOR 7, stated in §1 and §5.3):**
+- A stream MAC'd under our previous nonce is dropped. Our nonce for an id is new after every
+  session reset: our `/reload`, switching the last active instance off and on, a Battle.net
+  disconnect (`WipeSession`), and a forget of that id. A stream sent before our new nonce reached
+  the peer fails. Today Battle.net's binding delivers it. Our next hello goes out with the first
+  scan (5 s after login, sooner on a Battle.net event), not at once; AltStable measured that its
+  peer doesn't speak first, which keeps the window small for it, but that is a host's behaviour,
+  not a guarantee. The peer's own `/reload` changes only the nonce we send under, not this one.
+- A stream completing before its sender's key is trusted waits for the key-bearing hello (up to
+  30 s) instead of being delivered on Battle.net's word; dropped if that hello never comes. Trust
+  is what holds when the MAC is checked: a forgotten or evicted key, or the shared-key split
+  (§3), can also make a stream wait or fail. Our own key is still never trusted.
+- A stream the old character sent that is admitted only after the record names the new one
+  verifies under neither binding and is dropped.
+- One payload SHA-256 per received stream (cached on the buffer), plus an HMAC per candidate and
+  trusted key. MINOR 6 made verified deliveries hash-free; this undoes that. A receiver now pays
+  what the sender already pays (§7.4: 65 ms for 16 KB on the `bit` path, 129 ms for 32 KB).
+
+**What it gains:** the character is always the one the MAC proves. And §5.3's stated assumption
+(#31: a missing binding read as the account having left, so a handle reassigned to another
+account could complete a stream unchecked) is gone with the MAC-free path.
+
+- Waiting longer means holding longer: a complete stream that can't verify keeps its slot and its
+  bytes for up to 30 s, within the same caps. Four waiting messages refuse a fifth on that
+  (sender, tag), eight streams fill the shared pool, and a Battle.net-verified stream waiting on a
+  bad MAC stays protected from MINOR 6's eviction. A newer snapshot of the tag still replaces a
+  waiting older one; in messages mode a later message that verifies is delivered before an
+  earlier one still waiting, as §1 allows, and the 256-sid window can age that one out.
+- 30 s is not a guarantee of recovery: the record may lag longer, and a stream that verifies under
+  neither binding at a forget is dropped with it.
+
+**Unchanged:** the wire, the store, the reasons enum, the proof and the `proven` values; `verified`
+at admission still decides eviction at the shared caps (MINOR 6); floors and message windows key
+on the GUID that verified. Upgrade: an older copy's buffers have `peer` (the admission binding)
+and maybe no hash or `seq`; both are handled, and a buffer is never delivered unchecked for lack of
+a field (a missing `peer` only removes that candidate). A buffer an older copy completed keeps its
+own `awaitUntil` (10 s). The guarantee starts when this copy takes over; it can't undo what an
+older copy delivered.
+
+**Review log (Codex gpt-6-astra, high effort, read-only, 2026-11-14).**
+1. DISAGREE with the first proposal (remember a dropped hello's GUID, MAC only then): the second
+   branch also misattributes, and data completing before the hello can't be fixed that way.
+   Recommended mandatory MAC with the losses stated: taken.
+2. AGREE WITH CHANGES: the recheck before `ForgetId` ran host handlers mid-transition; the losses
+   were incomplete. Taken: verify, then forget, then deliver later; the losses rewritten.
+3. AGREE WITH CHANGES: `Route` must pass the binding it read; streams taken out of `S.buffers`
+   could be overtaken by a later completion; the verifier must be pure. Taken: pinned in place,
+   one ordered drain, `me` read before the transition.
+4. AGREE, implement. Notes for the implementation:
+   - keep an existing pin (`buf.as`) across a later forget: never re-verify or replace it (its
+     nonce is gone); a scan can forget the same id twice;
+   - keep the key that verified with the pin, so the trust refresh at delivery uses it;
+   - a pinned stream stays evictable when it wasn't Battle.net-verified at admission (MINOR 6's
+     rule is about admission; a pin authenticates, it doesn't reserve room), and a newer snapshot
+     of the tag may still evict it at the per-(sender, tag) cap;
+   - `GameFor` can call `ForgetId` from inside `TryDeliver`: after resolving the binding, look for
+     a pin made by that very call before deciding the stream waits;
+   - regression cases: a repeated forget, a pin made inside `GameFor`, a settle timer firing
+     before the next-frame drain (`Settle` drains first, so the pin is delivered), a new completion
+     before that drain, a pinned stream evicted, a first handler wiping the session before the
+     next pinned delivery, `Route` finding G2, and invalid-MAC buffers carried across an upgrade.

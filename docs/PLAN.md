@@ -945,3 +945,50 @@ game access until 2026-11-04, so the two-account check waits for that date.
     GUID, and came back 40 s later on the same id. On a client's own new login every friend's id
     was renumbered, which is why the watch starts afresh at a login. The character switch step was
     not done (same GUID), so it is still owed.
+
+### Proposed for MINOR 7: a character switch under a stale binding (#37) — NOT YET REVIEWED
+Reported by AltStable on 70938: after a character switch, a message from the new character was
+handed to `OnMessage` as the old one, 13 s later. Reproduced at the desk (2026-11-14):
+- **Battle.net vouched at admission (the bug).** The other account is bound by Battle.net to G1.
+  It switches to G2, but our record of its id still names G1 (a record lags a relog; the 13 s
+  measured fits). G2's hello is dropped, since it contradicts Battle.net (`OnHello`: a delayed
+  hello from the character that was there before must not replace the current one's nonce,
+  Codex round 2 of r1). G2's stream is admitted under G1, and `TryDeliver`'s first branch
+  delivers it **as G1, without its MAC**: Battle.net vouched for G1 when the stream began, and
+  shows G1 (or, if the record went blank meanwhile, nobody) at completion. Its MAC binds G2.
+- **A blank presence (correct today).** Bound to G1 by key or proof, the stream from G2 fails its
+  MAC under G1 and waits; G2's proof hello rebinds the id, and the stream is delivered as G2.
+
+Ownership holds: Battle.net verified the game account as ours. What is wrong is the character:
+the snapshot floor and a host's per-character data go under G1.
+
+**Proposal.**
+1. When `OnHello` drops a hello because Battle.net names another character, keep only its GUID:
+   `S.claimed[id] = { guid = guid, at = time() }`. Nothing else is kept or believed: no nonce, no
+   key, no answer, exactly as today.
+2. In `TryDeliver`'s first branch, if a claim for that id names another GUID than the binding and
+   is no older than the stream's admission minus a short grace (the hello usually lands just
+   before the data), the MAC decides instead of the binding: under our nonce for that id and a
+   trusted key, first for the binding's GUID (the old character's own stream, send then log out,
+   still delivers), then for the claimed GUID. The stream is credited to the GUID whose MAC
+   verifies; if neither does, it waits for a hello or the record, as the MAC branch does.
+3. A claim is dropped when Battle.net shows that GUID (the record caught up) or the id is forgotten.
+
+**Not taken:** checking every stream's MAC. It would also catch this, but it regresses a
+verified peer's stream sent under our previous nonce (after our `/reload`), which Battle.net's
+binding delivers today, and it hashes every verified stream again (MINOR 6 made them hash-free).
+
+**Cost:** one SHA-256 per stream, only for an id with a fresh contradicting claim, so only around
+a character switch.
+
+**For the review:**
+- Is a claimed GUID that a MAC proves under a trusted key enough to credit a stream to it, on an
+  id Battle.net verifies as ours? It's the standard the blank path already uses (§5.3).
+- What `proven` should the sender carry then: `"bnet"` (the game account is verified) or the
+  `"key"` / `"proof"` vocabulary (the GUID is proven by the key)? Adding a value grows the
+  contract.
+- The grace before admission, and whether a forged claim (any id's hello, unauthenticated) can
+  cost more than one hash per stream: the claim only makes the MAC decide, it can't credit
+  anything without a MAC under a trusted key.
+- `Peers()` keeps the stale character for the same reason; it is routing, not presence (§1, to
+  document either way).

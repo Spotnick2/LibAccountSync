@@ -7,8 +7,9 @@ Battle.net account, and receive them, with ownership proven first. Single owner 
 **MINOR 6 is on `main`, not yet tagged** (#31, the 2026-10-29 audit: the shared stream and byte
 caps make room for Battle.net-verified senders, the own-name check is gone, the friends list is
 walked lazily, the payload hash is cached; PLAN §10 "MINOR 6"). Desk-verified only: `r6` is tagged
-after the two-account check on 2026-11-04, the first day with game access, together with the §7.9
-relay gate and the new §7.11 handle-reuse measurement.
+after the two-account check (`/fp steps las check`, planned for 2026-11-04 but not yet run),
+together with the §7.11 handle-reuse measurement (`/fp steps las handles` and the watch, #34) and,
+if a friend can help, the §7.9 relay gate.
 **Status: `r5` released** (tag on `76fedef`, MINOR 5: #18 `messages = true` delivery for
 independent messages, #17 one tag per snapshot kind on a shared store, the stream cap per
 (sender, tag); Codex-reviewed). r5 and `r4` (`830017a`, #14 `SendTo`) passed the two-account
@@ -39,10 +40,11 @@ adversarial review first.
 - `C:\Projects\WoW\LibGlass` (one runtime file, instances, upgrade tests) and
   `C:\Projects\WoW\LibGroupBuffs` (consumers, version fixtures): the templates.
 - `C:\Projects\WoW\References\Docs\PORTING-TBC-TO-FOREVER.md` and
-  `C:\Projects\WoW\References\Forever\api\forever-api-1.60.1.70450.md`: client facts and the API dump. From
-  70235 to 70450 the documented changes are voice chat, Discord, mail transfer, LFG and stat
-  functions, plus two new `C_BattleNet` functions; nothing this library, its probe or its stubs
-  use changed (#27).
+  `C:\Projects\WoW\References\Forever\api\forever-api-1.60.1.70938.md`: client facts and the API dump. From
+  70450 to 70938 the documented changes touching Battle.net are an optional `subIcon` on
+  `BNetGameAccountInfo` (the readers copy a fixed field list) and the new
+  `C_BattleNet.GetDefaultTitleWhisperTarget`; nothing this library, its probe or its stubs use
+  changed (#34; 70235 to 70450, #27).
 
 ## Layout
 
@@ -54,7 +56,10 @@ adversarial review first.
   **`Tools\LibAccountSyncProbe\`**, `Tools\deploy-probe.ps1`, `Tools\read-wirelog.py`: the
   in-game probe and its log reader. Never shipped. A ForeverProbe module (`/fp las <command>`,
   `C:\Projects\WoW\References\Docs\PROBES.md`); the deploy installs `..\ForeverProbe` first. Each
-  release's two-account check is `/fp steps las check`; PLAN §7.3 and §7.9 are `blank` and `relay`.
+  release's two-account check is `/fp steps las check`; PLAN §7.3, §7.9 and §7.11 are `blank`,
+  `relay` and `handles`. §7.11 also runs by itself: every id's GUID and Battle.net account is
+  logged as it changes (`handles:` lines, a `REUSE` is the finding), from the first world entry,
+  carried over a `/reload`, in `LibAccountSyncProbeDB.handles`.
   After the owner's `/reload` on both accounts, read the results yourself: `read-wirelog.py` (every
   account's log) and `ForeverProbe.lua`'s `steps.records`.
 - **`tests\`**: see Testing.
@@ -109,7 +114,7 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
 
 ```
 pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua
-& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 140)
+& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 155)
 ```
 - Plain Lua 5.1 (`C:\Program Files (x86)\Lua\5.1\`), LibGlass's harness: strict globals (each
   stub confirmed in the API dump), loading through the XML with `(host, ns)`, secrets as

@@ -283,6 +283,32 @@ local M = {
         { '            if reason == "not-ready" and r.expected == nil then r.refused = r.refused + 1 end\n', "" } }, PROBE },
     { "probe: a results step never times out", { { "             timeout = RESULTS_TIMEOUT,\n", "" } }, PROBE },
     { "probe: a send to nobody waits", { { "    if r.expected == 0 then r.done = true; return end\n", "" } }, PROBE },
+    -- 7.11, the handles watch (#31)
+    { "probe: a new account on an id is no reuse", { { "local reuse = now.acct and last and now.acct ~= last",
+        "local reuse = false" } }, PROBE },
+    { "probe: a blank id forgets its account", { { "            if not now.acct then now.last = last end\n", "" } }, PROBE },
+    { "probe: a vanished id forgets its account", { { "local last = old and (old.acct or old.last)",
+        'local last = old and old.state ~= "gone" and (old.acct or old.last) or nil' } }, PROBE },
+    { "probe: the friends list isn't read", { { "    local friends = FriendAccounts()", "    local friends = {}" } }, PROBE },
+    { "probe: a friend's BattleTag is logged", {
+        { '        l = "bt:" .. LibStub("LibAccountSync-1.0")._test.SHA256(tag):sub(1, 8)', "        l = tag" } }, PROBE },
+    { "probe: a disagreement is counted at every read", { { "if now.other and not (old and old.other == now.other) then",
+        "if now.other then" } }, PROBE },
+    { "probe: Battle.net events aren't watched", {
+        { "for _, e in ipairs(HANDLE_EVENTS) do events[#events + 1] = e end", "" } }, PROBE },
+    { "probe: events are read at once", { { "    if pendingWhy then pendingWhy[event] = true; return end",
+        "    if true then Handles(event); return end" } }, PROBE },
+    { "probe: no sweep", { { '    C_Timer.NewTicker(30, function() Handles("sweep") end)\n', "" } }, PROBE },
+    { "probe: a /reload starts afresh", { { "if isReloadingUi == true and type(db.handles) == \"table\"",
+        "if false and type(db.handles) == \"table\"" } }, PROBE },
+    { "probe: a login carries over", { { "if isReloadingUi == true and type(db.handles) == \"table\"",
+        "if type(db.handles) == \"table\"" } }, PROBE },
+    { "probe: every world entry restarts the watch", { { "    if handles then return end\n    if isReloadingUi", "    if isReloadingUi" } }, PROBE },
+    { "probe: 7.11 takes no switch", { { " and h.guid ~= handlePin.guid,", "," } }, PROBE },
+    { "probe: 7.11 takes an account still in the game", { { "check = function() return #OtherOwn() == 0, PinnedNow() end },",
+        "check = function() return true, PinnedNow() end }," } }, PROBE },
+    { "probe: 7.11 totals pass on a reuse", { { "return handles ~= nil and handles.reuse == 0,",
+        "return handles ~= nil," } }, PROBE },
 
     -- The log reader (test_wirelog)
     { "wirelog: a line without a clock is dropped", { { "if c is None or c[:len(since)] >= since]",

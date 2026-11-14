@@ -21,10 +21,12 @@
 --   /fp las ping <id>         a raw ping on the probe's own prefix to any id,
 --                             e.g. a friend on Appear Offline (9)
 --   /fp las presence          BNGetInfo's presenceID vs our bnetAccountID (10)
+--   /fp las handles           every id's GUID and Battle.net account, and any
+--                             REUSE since login (11; watched all session)
 --   /fp las clear             empty the log
 -- Procedures (/fp steps las <name>): check (a release across two own
--- accounts), blank (7.3), relay (7.9). Received messages are checked and
--- logged as they come, with how long since the last send.
+-- accounts), blank (7.3), relay (7.9), handles (7.11). Received messages are
+-- checked and logged as they come, with how long since the last send.
 ----------------------------------------------------------------------------
 
 local ADDON, NS = ...
@@ -407,6 +409,166 @@ local function Ping(id)
 end
 
 --------------------------------------------------------------------------------
+-- 7.11: game account id handles over a session (#31)
+--------------------------------------------------------------------------------
+-- Every id's GUID and Battle.net account, logged when they change, from the
+-- first world entry on. An id whose account changes from one known account
+-- to another is a REUSE: what PLAN 5.3's stated assumption says doesn't
+-- happen. A blank or vanished id keeps its last known account, so a handle
+-- freed and given to someone else still counts. A /reload keeps the client's
+-- session, so what was seen is carried over in the saved table; a login
+-- starts afresh, since handles may be renumbered then.
+--
+-- An account is "own" (our BattleTag) or "bt:" and 8 hex of its BattleTag's
+-- SHA-256: the log tells accounts apart without holding a friend's tag.
+
+local handles      -- the saved db.handles: { seen = { [id] = h }, since, changes, reuse, disagree }
+
+local function FreshHandles()
+    return { seen = {}, since = date("%Y-%m-%d %H:%M:%S"), changes = 0, reuse = 0, disagree = 0 }
+end
+
+local tagLabels = {}
+local function TagLabel(tag)
+    if IsS(tag) or type(tag) ~= "string" or tag == "" then return nil end
+    local _, _, own = pcall(BNGetInfo)
+    if not IsS(own) and own == tag then return "own" end
+    local l = tagLabels[tag]
+    if not l then
+        l = "bt:" .. LibStub("LibAccountSync-1.0")._test.SHA256(tag):sub(1, 8)
+        tagLabels[tag] = l
+    end
+    return l
+end
+
+-- Each friend's game account ids, to that friend's account: the only owner a
+-- blank presence has.
+local function FriendAccounts()
+    local map = {}
+    local ok, n = pcall(BNGetNumFriends)
+    if not ok or IsS(n) or type(n) ~= "number" then return map end
+    for i = 1, n do
+        local okA, a = pcall(C_BattleNet.GetFriendAccountInfo, i)
+        local label = okA and not IsS(a) and type(a) == "table" and TagLabel(a.battleTag) or nil
+        local okN, m = pcall(C_BattleNet.GetFriendNumGameAccounts, i)
+        if label and okN and not IsS(m) and type(m) == "number" then
+            for j = 1, m do
+                local okI, gi = pcall(C_BattleNet.GetFriendGameAccountInfo, i, j)
+                if okI and not IsS(gi) and type(gi) == "table" and not IsS(gi.gameAccountID)
+                    and type(gi.gameAccountID) == "number" then
+                    map[gi.gameAccountID] = label
+                end
+            end
+        end
+    end
+    return map
+end
+
+-- One id's record now: { state, guid?, acct?, src?, other? }. `other` is the
+-- friends list's account when the GUID's says another.
+local function HandleNow(id, g, friends)
+    if IsS(g) then return { state = "secret" } end
+    local h = { state = "online" }
+    if IsBlank(g) then h.state = "blank"
+    elseif not IsS(g.isOnline) and g.isOnline == false then h.state = "offline"
+    elseif not IsS(g.clientProgram) and type(g.clientProgram) == "string" and g.clientProgram ~= "WoW" then
+        h.state = g.clientProgram
+    end
+    local guid = g.playerGuid
+    if not IsS(guid) and type(guid) == "string" and guid ~= "" then
+        h.guid = guid
+        local ok, a = pcall(C_BattleNet.GetAccountInfoByGUID, guid)
+        if ok and not IsS(a) and type(a) == "table" then
+            h.acct = TagLabel(a.battleTag)
+            if h.acct then h.src = "guid" end
+        end
+    end
+    local f = friends[id]
+    if f and h.acct and f ~= h.acct then h.other = f end
+    if f and not h.acct then h.acct, h.src = f, "friends" end
+    return h
+end
+
+local function Describe(h)
+    if not h then return "nothing" end
+    return ("%s %s %s%s"):format(h.state, h.guid or "no-guid", h.acct or "?",
+        h.src and ("(" .. h.src .. ")") or (h.last and ("(last " .. h.last .. ")") or ""))
+end
+
+-- Reads every id and logs what changed since the last read.
+local function Handles(why)
+    if not handles then return end
+    local friends = FriendAccounts()
+    local seen = handles.seen
+    for id = 1, 128 do
+        local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
+        local now = ok and (IsS(g) or type(g) == "table") and HandleNow(id, g, friends) or nil
+        local old = seen[id]
+        if now or (old and old.state ~= "gone") then
+            now = now or { state = "gone" }
+            local last = old and (old.acct or old.last)
+            if not now.acct then now.last = last end
+            local reuse = now.acct and last and now.acct ~= last
+            if reuse then
+                handles.reuse = handles.reuse + 1
+                Log(("handles: REUSE id %d, %s -> %s (%s)"):format(id, last, now.acct, why))
+            end
+            if now.other and not (old and old.other == now.other) then
+                handles.disagree = handles.disagree + 1
+                Log(("handles: DISAGREE id %d, its GUID says %s, the friends list %s (%s)"):format(id, now.acct,
+                    now.other, why))
+            end
+            local was, is = Describe(old), Describe(now)
+            if was ~= is then
+                handles.changes = handles.changes + 1
+                Log(("handles: id %d %s -> %s (%s)"):format(id, was, is, why))
+            end
+            seen[id] = now
+        end
+    end
+end
+
+local function HandlesSummary()
+    if not handles then Log("handles: not started (no world entry yet)"); return end
+    local n = 0
+    for _, h in pairs(handles.seen) do if h.state ~= "gone" then n = n + 1 end end
+    Log(("handles: %d ids now; since %s: %d changes, %d REUSE, %d DISAGREE"):format(n, handles.since,
+        handles.changes, handles.reuse, handles.disagree))
+    return handles.reuse, handles.disagree
+end
+
+-- Battle.net events are bunched: one read a second after the first of them.
+local pendingWhy
+local function HandlesSoon(event)
+    if not handles then return end
+    if pendingWhy then pendingWhy[event] = true; return end
+    pendingWhy = { [event] = true }
+    C_Timer.After(1, function()
+        local names = {}
+        for e in pairs(pendingWhy) do names[#names + 1] = e end
+        table.sort(names)
+        pendingWhy = nil
+        Handles(table.concat(names, ","))
+    end)
+end
+
+-- The first world entry after a load: a /reload carries the saved handles
+-- over, a login starts afresh.
+local function StartHandles(db, isReloadingUi)
+    if handles then return end
+    if isReloadingUi == true and type(db.handles) == "table" and type(db.handles.seen) == "table" then
+        handles = db.handles
+        Log(("handles: carried over a /reload, watched since %s"):format(tostring(handles.since)))
+    else
+        handles = FreshHandles()
+        db.handles = handles
+        Log("handles: a new login, watching every id from now")
+    end
+    Handles(isReloadingUi == true and "reload" or "login")
+    C_Timer.NewTicker(30, function() Handles("sweep") end)
+end
+
+--------------------------------------------------------------------------------
 -- Commands
 --------------------------------------------------------------------------------
 
@@ -423,6 +585,8 @@ Probe:Command("friends", function() Friends("now") end, "the friends list's comp
 Probe:Command("ids", function() Ids() end, "every id's raw record: blank? online?")
 Probe:Command("ping", function(arg) Ping(arg) end, "<id>: a raw ping on the probe's own prefix")
 Probe:Command("presence", function() Presence() end, "BNGetInfo's presenceID vs our bnetAccountID")
+Probe:Command("handles", function() Handles("command"); HandlesSummary() end,
+    "every id's GUID and Battle.net account, and any REUSE since login (7.11)")
 Probe:Command("clear", function() Probe:ClearLog(); Log("log cleared") end, "empty the saved log")
 
 --------------------------------------------------------------------------------
@@ -609,14 +773,99 @@ Probe:Steps("relay", {
     { text = "Ask the friend to /reload. Then /reload here, to save this side.", reload = true },
 })
 
+-- 7.11's active part (#31): the other own account switches character, then
+-- leaves the game and comes back. Which id holds it each time, and what
+-- becomes of the id it left? The passive part is the rest of the session:
+-- the watcher logs friends coming and going.
+local function OtherOwn()
+    local mine = UnitGUID("player")
+    if IsS(mine) then mine = nil end
+    local ids = {}
+    for id = 1, 128 do
+        local h = handles and handles.seen[id]
+        if h and h.acct == "own" and h.guid and h.guid ~= mine and h.state == "online" then ids[#ids + 1] = id end
+    end
+    return ids
+end
+local handlePin        -- { id, guid } of the other account, as pinned
+local function PinnedNow()
+    if not handlePin then return "nothing pinned" end
+    return ("id %d is now %s"):format(handlePin.id, Describe(handles and handles.seen[handlePin.id]))
+end
+local function OtherWhere(label)
+    Handles(label)
+    local ids = OtherOwn()
+    local text = #ids == 0 and "the other account holds no id" or ("the other account holds id " .. table.concat(ids, ","))
+    Log(("handles %s: %s; %s"):format(label, text, PinnedNow()))
+    return ids, text
+end
+
+Probe:Steps("handles", {
+    title = "PLAN 7.11: game account id handles over a session",
+    rev = 1,
+    { text = steadyText },
+    { text = "Reading every id, and pinning the one your other account holds.", button = "Pin",
+      run = function()
+          local ids = OtherWhere("pin")
+          handlePin = nil
+          if #ids == 1 then handlePin = { id = ids[1], guid = handles.seen[ids[1]].guid } end
+          return handlePin and handlePin.id, #ids
+      end,
+      check = function() return handlePin ~= nil, PinnedNow() end },
+    { text = "On the OTHER account, log out to the character list and log a DIFFERENT character in. "
+          .. "Once it is in the world, press Read.", button = "Read",
+      run = function() local _, text = OtherWhere("switch"); return text end,
+      check = function()
+          local ids = OtherOwn()
+          local h = ids[1] and handles.seen[ids[1]]
+          return #ids == 1 and handlePin ~= nil and h.guid ~= handlePin.guid,
+                 #ids == 1 and ("id " .. ids[1] .. (ids[1] == (handlePin and handlePin.id) and ", the same" or ", a new one"))
+                     or (#ids .. " ids"), PinnedNow()
+      end },
+    { text = "On the OTHER account, exit the game completely, to the desktop. Once it has closed, "
+          .. "press Read.", button = "Read",
+      run = function() local _, text = OtherWhere("exit"); return text end,
+      check = function() return #OtherOwn() == 0, PinnedNow() end },
+    { text = "Start the game on the OTHER account again and log a character in. Once it is in the world, "
+          .. "press Read.", button = "Read",
+      run = function() local _, text = OtherWhere("back"); return text end,
+      check = function()
+          local ids = OtherOwn()
+          return #ids == 1, #ids == 1 and ("id " .. ids[1] .. (ids[1] == (handlePin and handlePin.id)
+              and ", the pinned one" or ", not the pinned one")) or (#ids .. " ids"), PinnedNow()
+      end },
+    { text = "Reading the totals: no id may have changed Battle.net account.", auto = true,
+      run = function() Handles("totals"); return HandlesSummary() end,
+      check = function() return handles ~= nil and handles.reuse == 0, "REUSE " .. tostring(handles and handles.reuse),
+                                "DISAGREE " .. tostring(handles and handles.disagree) end },
+    { text = "Now /reload, to save this; the watcher carries on through it. Then keep the probe deployed "
+          .. "and play as usual: friends coming and going are the rest of 7.11, saved when you log out.",
+      reload = true },
+})
+
 --------------------------------------------------------------------------------
 -- Events and the instances
 --------------------------------------------------------------------------------
 
+-- What may move a handle (7.11): each one schedules a read of every id.
+local HANDLE_EVENTS = { "BN_INFO_CHANGED", "BN_FRIEND_INFO_CHANGED", "BN_FRIEND_ACCOUNT_ONLINE",
+                        "BN_FRIEND_ACCOUNT_OFFLINE", "BN_FRIEND_LIST_SIZE_CHANGED", "BN_CONNECTED", "BN_DISCONNECTED" }
+local isHandleEvent = {}
+for _, e in ipairs(HANDLE_EVENTS) do isHandleEvent[e] = true end
+
 local frame = CreateFrame("Frame")
-Probe:RegisterEvents(frame, { "ADDON_LOADED", "PLAYER_LOGIN", "BN_CHAT_MSG_ADDON" })
+local events = { "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "BN_CHAT_MSG_ADDON" }
+for _, e in ipairs(HANDLE_EVENTS) do events[#events + 1] = e end
+Probe:RegisterEvents(frame, events)
 frame:SetScript("OnEvent", function(_, event, ...)
-    if event == "ADDON_LOADED" and ... == ADDON then
+    if isHandleEvent[event] then
+        HandlesSoon(event)
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        local _, isReloadingUi = ...
+        if IsS(isReloadingUi) then isReloadingUi = nil end
+        local db = rawget(_G, "LibAccountSyncProbeDB")
+        if type(db) == "table" then StartHandles(db, isReloadingUi) end
+    elseif event == "ADDON_LOADED" and ... == ADDON then
         Probe:Ready()                                  -- logs EARLY if the host somehow isn't loaded
         -- rawget: on a first run the saved table is absent, not an error.
         local db = rawget(_G, "LibAccountSyncProbeDB")
@@ -660,4 +909,6 @@ Msgs.OnMessage(OnMessageFor("ProbeMsg"))
 
 NS._test = { Probe = Probe, Sync = Sync, Kinds = Kinds, Msgs = Msgs, Verdict = Verdict, Padded = Padded,
              Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end,
-             Round = function() return round end, Tally = function() return Tally() end }
+             Round = function() return round end, Tally = function() return Tally() end,
+             Handles = function() return handles end, StartHandles = StartHandles,
+             ResetHandles = function() handles = nil end }

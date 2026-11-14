@@ -652,7 +652,10 @@ wire log and a Python reader like `read-wirelog.py`.
     account as they change, with the presence and event timing. Is a handle ever reassigned to
     another Battle.net account while this client stays online? GUID changes alone also happen on
     an ordinary character switch. Decides whether §5.3's stated assumption needs code. One session
-    without reuse is evidence, not a platform guarantee.
+    without reuse is evidence, not a platform guarantee. The probe watches every id from the first
+    world entry and logs a `REUSE` when an id's account changes, a blank or vanished id keeping its
+    last known one; `/fp steps las handles` adds the other own account switching character,
+    leaving the game and coming back (#34).
 
 ## 8. Repo layout
 
@@ -928,4 +931,6 @@ game access until 2026-11-04, so the two-account check waits for that date.
   released copy delivered by the current one. Five new mutations; "our own name is accepted"
   became "our own echo is accepted".
 - Wire, store, the reasons enum and the proof unchanged. Not yet tagged: `r6` follows the
-  2026-11-04 check (`/fp steps las check`), with §7.9 and §7.11 measured the same day.
+  two-account check (`/fp steps las check`; planned for 2026-11-04, not run then), with §7.11
+  measured the same day and §7.9 when a friend can help. Before it (#34): the client moved to
+  70938, with nothing this library uses changed, and the probe got its §7.11 watch.

@@ -22,6 +22,27 @@ end
 local PROBE = "Tools/LibAccountSyncProbe/LibAccountSyncProbe.lua"
 local WIRELOG = "Tools/read-wirelog.py"
 local M = {
+    -- No delivery without its MAC (MINOR 7, #37; test_switch)
+    { "MAC: Battle.net's word delivers again", {
+        { "            sender, k = I.Verify(buf, S.myNonce[id], I.Self(), now, buf.peer)\n",
+          "            sender, k = I.Verify(buf, S.myNonce[id], I.Self(), now, buf.peer)\n            if not sender and now and now.proven == \"bnet\" then sender = now end\n" } } },
+    { "MAC: the admission binding is no candidate", { { "I.Verify(buf, S.myNonce[id], I.Self(), now, buf.peer)",
+        "I.Verify(buf, S.myNonce[id], I.Self(), now)" } } },
+    { "MAC: a forget pins nothing", { { "                if sender then buf.as, buf.asKey = sender, k end\n", "" } } },
+    { "MAC: a scan forgets without the new binding", { { "then I.ForgetId(id, now) else known[id] = true end",
+        "then I.ForgetId(id) else known[id] = true end" } } },
+    { "MAC: a route check forgets without its binding", { { "        I.ForgetId(id, g)", "        I.ForgetId(id)" } } },
+    { "MAC: a second forget drops a pinned stream", { { "            if buf.as then pinned = true else S.buffers[key] = nil end",
+        "            if buf.as and nonce then pinned = true else S.buffers[key] = nil end" } } },
+    { "MAC: pinned streams are delivered mid-transition", {
+        { "        C_Timer.After(0, function()\n            if not Ready() then return end\n            return lib.impl.RecheckAwaiting(id)\n        end)",
+          "        I.RecheckAwaiting(id)" } } },
+    { "MAC: a pin made inside GameFor is ignored", { { "        if buf.as then\n            sender, k = buf.as, buf.asKey\n        elseif",
+        "        if false then\n            sender, k = buf.as, buf.asKey\n        elseif" } } },
+    { "MAC: the wait stays 10 s", { { "local AWAIT_HELLO = 30", "local AWAIT_HELLO = 10" } } },
+    { "MAC: hashed with no candidate to check", { { "    local tried, keys = {}, nil\n",
+        "    buf.hash = buf.hash or SHA256(buf.payload)\n    local tried, keys = {}, nil\n" } } },
+
     -- Ownership fails closed (§5.1, §5.2)
     { "friends list: no settle wait", { { "if (time() - S.upSince) < FRIENDS_SETTLE then return nil end", "" } } },
     { "friends list: a gap is skipped", {

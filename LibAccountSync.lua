@@ -28,7 +28,7 @@
 -- - lib.ready = MINOR is the last line: a copy that threw partway leaves every
 --   entry point inert.
 
-local MAJOR, MINOR = "LibAccountSync-1.0", 6
+local MAJOR, MINOR = "LibAccountSync-1.0", 7
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end   -- an equal or newer copy is already loaded
 
@@ -64,7 +64,8 @@ local PROOF_CHECKS_PER_MINUTE = 12     -- proof verifications (up to 16 HMACs ea
 local FRIENDS_SETTLE = 60              -- seconds after Battle.net comes up
 local SETTLING_EVERY, SETTLING_TRIES = 10, 30
 local STREAM_SETTLE = 6                -- seconds with no chunk drops a stream
-local AWAIT_HELLO = 10                 -- a complete stream waits this long for its hello
+local AWAIT_HELLO = 30                 -- a complete stream waits this long to verify (#37: a
+                                       -- record measured 13 s behind a relog)
 local STREAMS_PER_ID, STREAMS_TOTAL = 2, 8     -- open streams per (sender id, tag), and in all
 local STREAMS_PER_ID_MESSAGES = 4      -- per (sender id, tag) for a messages tag (#18)
 local MESSAGE_WINDOW = 256             -- sids remembered per (tag, sender GUID), messages mode
@@ -624,7 +625,7 @@ end
 -- Who we are: { tag, account (only from GetAccountInfoByGUID), game, project,
 -- region }, or nil. Our presence can be blank for a long time; the BattleTag
 -- also comes from BNGetInfo, and game and region from the store (§5.1).
-function I.Self()
+function I.Self(quiet)
     local s = {}
     local guid = PlayerGuid()
     local acct = guid and I.AcctRec(guid)
@@ -650,7 +651,7 @@ function I.Self()
     -- global another addon could overwrite, and it must not replace a value
     -- learned from a live presence.
     if type(s.project) == "number" and type(s.region) == "number" then
-        I.SaveSelf(s.project, s.region)
+        if not quiet then I.SaveSelf(s.project, s.region) end
     else
         s.project, s.region = I.SavedSelf()
         if s.project == nil then s.project, s.region = I.ClientSelf() end
@@ -794,12 +795,37 @@ end
 
 -- Forget everything an id told us: it went offline, its binding changed, or
 -- Battle.net contradicts it. Whoever comes back proves itself afresh.
-function I.ForgetId(id)
+-- Its complete streams are verified first, while our nonce for it is still
+-- here (#37): against `now`, the binding the caller just read (a scan, a
+-- route check), and each stream's admission binding. One that verifies is
+-- pinned to that sender and stays; the rest go. Pure until then: no handler
+-- runs here, mid-transition. The pinned ones are delivered on the next frame
+-- through the ordered drain, so nothing overtakes them (Codex rounds 2-4).
+function I.ForgetId(id, now)
+    local nonce = S.myNonce[id]
+    if nonce then
+        local me = I.Self(true)
+        for _, buf in pairs(S.buffers) do
+            if buf.id == id and buf.complete and not buf.as then
+                local sender, k = I.Verify(buf, nonce, me, now, buf.peer)
+                if sender then buf.as, buf.asKey = sender, k end
+            end
+        end
+    end
     S.learned[id], S.helloSent[id], S.myNonce[id], S.theirNonce[id] = nil, nil, nil, nil
     S.answered[id], S.proofChecks[id], S.pendingKeys[id] = nil, nil, nil
     S.routeChecked[id] = nil
+    local pinned = false
     for key, buf in pairs(S.buffers) do
-        if buf.id == id then S.buffers[key] = nil end
+        if buf.id == id then
+            if buf.as then pinned = true else S.buffers[key] = nil end
+        end
+    end
+    if pinned then
+        C_Timer.After(0, function()
+            if not Ready() then return end
+            return lib.impl.RecheckAwaiting(id)
+        end)
     end
 end
 
@@ -1088,7 +1114,7 @@ function I.Scan()
     local known = {}
     for id, old in pairs(S.peers) do
         local now = fresh[id]
-        if not now or now.guid ~= old.guid then I.ForgetId(id) else known[id] = true end
+        if not now or now.guid ~= old.guid then I.ForgetId(id, now) else known[id] = true end
     end
     wipe(S.peers)
     for id, p in pairs(fresh) do
@@ -1122,7 +1148,7 @@ function I.Route(id)
     local g = I.GameFor(id)
     if not g or g.guid ~= p.guid then
         S.peers[id] = nil
-        I.ForgetId(id)
+        I.ForgetId(id, g)
         I.RequestScan()
         return nil
     end
@@ -1416,52 +1442,50 @@ function I.Complete(key, buf)
     if S.buffers[key] == buf then I.ArmSettle(key, buf) end
 end
 
--- A sender verified by Battle.net (at admission or now) is believed as is.
--- Anyone else needs a proven hello now AND a MAC under a trusted key with our
--- current nonce and the GUID that hello proved (§5.3, round 3).
-function I.TryDeliver(key, buf)
-    local id = buf.id
-    local now = I.GameFor(id)
-    local was = buf.peer                  -- the binding when the stream was admitted
-    local sender
-    if was and was.proven == "bnet" and (not now or now.guid == was.guid) then
-        -- Battle.net vouched for this character when its stream began, and
-        -- it is still the one there (or has logged out since: send, then log
-        -- out, still delivers).
-        sender = now or was
-    elseif now and now.proven == "bnet" and buf.prior == now.guid then
-        -- Verified now, and the first character authenticated for this id
-        -- since the stream began is this one (I.NoteBinding; GameFor above
-        -- notes it for a genuine first contact). A known sender gone blank, or
-        -- a character change, leaves another prior GUID, so it goes through
-        -- the MAC below (§5.3; Codex r1 rounds 3-5).
-        sender = now
-    elseif now and S.myNonce[id] and buf.mac then
-        -- Anything else (a character change on that account since the stream
-        -- began, a binding we only guessed) is decided by the MAC, bound to the
-        -- character the account shows NOW: an older character's stream can't
-        -- be passed off as the new one's (Codex round 2 of r1).
-        local me = I.Self()
-        if not me or me.project == nil or me.region == nil then return false end
-        -- Hashed once per stream, at its first MAC check (not at completion:
-        -- a verified sender's stream never needs it, and a buffer an older
-        -- copy completed has no hash yet), then kept for every recheck.
-        buf.hash = buf.hash or SHA256(buf.payload)
-        local hash = buf.hash
-        for k in pairs(I.TrustUnion()) do
-            if I.Mac(k, S.myNonce[id], now.guid, me.project, me.region, buf.tag, buf.sidText, buf.n, hash) == buf.mac then
-                I.Trust(k)
-                sender = now
-                break
+-- The MAC check (§5.3), pure: under our nonce for the id and a trusted key,
+-- for each candidate's GUID in turn. Returns the candidate that verified and
+-- the key, or nil. The payload is hashed at the first candidate there is to
+-- check, once per stream, and kept (#31).
+function I.Verify(buf, nonce, me, ...)
+    if not nonce or not buf.mac or type(buf.payload) ~= "string" then return nil end
+    if not me or me.project == nil or me.region == nil then return nil end
+    local tried, keys = {}, nil
+    for i = 1, select("#", ...) do
+        local c = select(i, ...)
+        if type(c) == "table" and IsGuid(c.guid) and not tried[c.guid] then
+            tried[c.guid] = true
+            buf.hash = buf.hash or SHA256(buf.payload)
+            keys = keys or I.TrustUnion()
+            for k in pairs(keys) do
+                if I.Mac(k, nonce, c.guid, me.project, me.region, buf.tag, buf.sidText, buf.n, buf.hash) == buf.mac then
+                    return c, k
+                end
             end
         end
-        -- A MAC that fails may mean a stale binding (another character on
-        -- that account, its hello still on the way): wait for the hello,
-        -- dropped when the wait runs out.
-        if not sender then return false end
-    else
-        return false
     end
+end
+
+-- No delivery without its MAC (MINOR 7, #37): the stream goes to the first
+-- candidate whose GUID the MAC verifies, the binding now and then the one at
+-- admission (so an old character's last stream is still its own after the
+-- record names the next one). A stream ForgetId pinned is delivered as its
+-- pinned sender: it verified before that forget took the nonce. Anything
+-- else waits for a hello, the record, or the end of the wait (§5.3).
+function I.TryDeliver(key, buf)
+    local id = buf.id
+    local sender, k = buf.as, buf.asKey
+    if not sender then
+        local now = I.GameFor(id)            -- may forget the id, and pin this very stream
+        if buf.as then
+            sender, k = buf.as, buf.asKey
+        elseif S.buffers[key] ~= buf then
+            return false                     -- dropped by that forget
+        else
+            sender, k = I.Verify(buf, S.myNonce[id], I.Self(), now, buf.peer)
+            if not sender then return false end
+        end
+    end
+    I.Trust(k)
     S.buffers[key] = nil
     S.finished[key] = time()
     local inst = lib.byTag[buf.tag]

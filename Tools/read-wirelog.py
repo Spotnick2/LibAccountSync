@@ -26,7 +26,8 @@ import glob
 import os
 import re
 
-DEFAULT_WTF = r"C:\Program Files (x86)\World of Warcraft\_classic_beta_\WTF"
+# The live client (the beta is closed; the deploy scripts install here too).
+DEFAULT_WTF = r"C:\Program Files (x86)\World of Warcraft\_forever_\WTF"
 
 # ForeverProbe's stamp: uptime (one decimal), " C" in combat, the run number.
 STAMP = re.compile(r"^(\d+(?:\.\d+)?)(?: C)? #(\d+) ")

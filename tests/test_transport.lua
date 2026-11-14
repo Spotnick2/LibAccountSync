@@ -200,7 +200,6 @@ end
 do
     local lib, inst, store, A = verified()
     local box = inbox(inst)
-    lib.state.lastGuid[3] = nil               -- A known through data alone
     A:send("GlassChat", "A newer", { sid = "1760000000002" })
     eq(#box, 1, "(a) A's newer snapshot lands")
     A:setBlank(true)

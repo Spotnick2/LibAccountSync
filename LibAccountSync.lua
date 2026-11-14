@@ -87,7 +87,7 @@ local FUNCTIONS = { "Send", "SendTo", "OnMessage", "Peers", "Rescan", "SetEnable
 
 local STATE_TABLES = { "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
                        "finished", "refused", "floors", "routeChecked", "reported", "proofChecks", "pendingKeys",
-                       "lastGuid", "seen" }
+                       "seen" }
 for _, k in ipairs(STATE_TABLES) do
     if S[k] == nil then S[k] = {} end
 end
@@ -760,25 +760,14 @@ local function PeerFromGame(id, g)
 end
 
 -- The binding for an id right now: Battle.net's word, or a hello proven this
--- session while that id is still online and still blank. Else nil.
--- Every binding, however it is authenticated (Battle.net, a hello, data
--- admission or completion), is recorded here: the character this id was last
--- bound to this session. A stream admitted before any character was known
--- for its id takes the first one authenticated after it, so a later change
--- of character is seen as one and must pass the GUID-bound MAC (§5.3;
--- Codex r1 rounds 4, 5).
-function I.NoteBinding(id, guid)
-    S.lastGuid[id] = guid
-    for _, b in pairs(S.buffers) do
-        if b.id == id and b.prior == nil then b.prior = guid end
-    end
-end
-
+-- session while that id is still online and still blank. Else nil. (Until
+-- MINOR 7 every binding was also recorded per id, for the MAC-free delivery
+-- of a sender that kept its character; the MAC now decides every delivery,
+-- §5.3, #37.)
 function I.GameFor(id, me, friends)
     local g = I.OwnAccountGame(id, me)
     if g then
         S.learned[id] = nil      -- Battle.net speaks for this id now
-        I.NoteBinding(id, g.playerGuid)
         return PeerFromGame(id, g)
     end
     local l = S.learned[id]
@@ -789,7 +778,6 @@ function I.GameFor(id, me, friends)
         I.ForgetId(id)           -- gone, or no longer blank: Battle.net decides now
         return nil
     end
-    I.NoteBinding(id, l.guid)
     return { id = id, guid = l.guid, name = l.name, realm = l.realm, faction = l.faction, proven = l.proven }
 end
 
@@ -831,7 +819,7 @@ end
 
 function I.WipeSession()
     for _, k in ipairs({ "peers", "learned", "myNonce", "theirNonce", "helloSent", "answered", "buffers",
-                         "routeChecked", "proofChecks", "pendingKeys", "lastGuid" }) do
+                         "routeChecked", "proofChecks", "pendingKeys" }) do
         wipe(S[k])
     end
 end
@@ -1038,7 +1026,6 @@ function I.OnHello(id, text)
         return
     end
     S.peers[id] = peer
-    I.NoteBinding(id, peer.guid)
     -- Answered even for a peer we know: it may have reloaded and forgotten us.
     I.SendHello(id, "answer")
     I.RecheckAwaiting(id)
@@ -1350,10 +1337,7 @@ function I.OnData(id, text)
         if total >= STREAMS_TOTAL and verified then total = total - I.EvictUnverified(1, 0) end
         if total >= STREAMS_TOTAL then S.refused[key] = time(); return end
         buf = { id = id, tag = tag, sid = tonumber(sid), sidText = sid, n = n, chunks = {}, have = 0,
-                bytes = 0, last = time(), verified = verified, peer = p,
-                -- The character this id was last bound to this session, even
-                -- if its presence is blank right now (Codex r1 round 4).
-                prior = (p and p.guid) or S.lastGuid[id] }
+                bytes = 0, last = time(), verified = verified, peer = p }
         S.buffers[key] = buf
         I.ArmSettle(key, buf)
     end

@@ -111,13 +111,24 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
 ## Testing
 
 ```
-pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua
-& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 157)
+pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua + test_wirelog.py
+pwsh tests/run.ps1 -KitDev                               # against the ..\WowTestKit working copy
+& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 159)
 ```
-- Plain Lua 5.1 (`C:\Program Files (x86)\Lua\5.1\`), LibGlass's harness: strict globals (each
-  stub confirmed in the API dump), loading through the XML with `(host, ns)`, secrets as
-  `newproxy` values that throw.
-- `tests/wow_stubs.lua` simulates Battle.net (ported from AltStable's), a clock (`WoW.advance`),
+- The test scaffolding is WowTestKit (`C:\Projects\WoW\WowTestKit`; its README is the reference)
+  at the commit and client build `tests\kit.pin` names. `tests\run.ps1` puts that commit in
+  `%LOCALAPPDATA%\WowTestKit\<sha>` and hands off to the kit's runner; CI fetches it with
+  `tests\fetch_kit.sh`. `tests\kit.lua`, `kit.ps1` and `fetch_kit.sh` are the kit's bootstrap
+  copies: never edit them here. A kit need is an issue on the kit, worked around in
+  `tests\wow_stubs.lua` with a `-- WowTestKit #N:` comment meanwhile. `tests\run.ps1 -KitDev`
+  runs against the `..\WowTestKit` working copy instead of the pin. `mutate.lua` runs the test
+  files directly, so it needs that cache (run `tests\run.ps1` once) or `$env:WOWTESTKIT`.
+- Plain Lua 5.1 (`C:\Program Files (x86)\Lua\5.1\`). From the kit: strict globals, secrets as
+  `newproxy` values that throw (a `pcall` that swallows a touch fails `done()`), event names
+  checked against the build, and every widget method recorded: `test_methods` checks each exists
+  on the pinned build. The library loads through the XML with `(host, ns)`.
+- `tests/wow_stubs.lua` adds, each confirmed in the API dump: Battle.net (ported from
+  AltStable's), a clock (`WoW.advance` a second at a time; `GetTime` an uptime, as on the client),
   and a ChatThrottleLib stub; `test_ctl` runs the real vendored v32. `tests/harness.lua` has
   `session()` and `Peer`, the other account, which builds hellos, proofs and MACs from the plan's
   formulas independently of the library.

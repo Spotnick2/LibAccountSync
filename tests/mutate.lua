@@ -314,6 +314,10 @@ local M = {
     { "probe: 7.11 totals pass on a reuse", { { "return handles ~= nil and handles.reuse == 0,",
         "return handles ~= nil," } }, PROBE },
 
+    -- Widget methods (test_methods, WowTestKit's Kit.checkMethods)
+    { "methods: the frame calls a FontString's SetText", { { '    lib.frame:SetScript("OnEvent", function(_, event, ...)',
+        '    lib.frame:SetText("x")\n    lib.frame:SetScript("OnEvent", function(_, event, ...)' } } },
+
     -- The log reader (test_wirelog)
     { "wirelog: a line without a clock is dropped", { { "if c is None or c[:len(since)] >= since]",
         "if c is not None and c[:len(since)] >= since]" } }, WIRELOG },

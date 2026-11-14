@@ -979,19 +979,39 @@ grace window fixes that, since Battle.net is unordered.
    - G2's stream admitted under a stale G1 verifies under neither while the record lags, waits,
      and is delivered as G2 once the record or G2's proof hello names it.
 2. Rechecks of waiting streams: when a hello is believed (as today), at the end of the wait (as
-   today), and, new, when a scan finds an id's binding changed: its complete streams are rechecked
-   against the new binding **before** `ForgetId` drops its buffers and nonces (today it drops them,
-   which would lose G2's stream exactly when the record catches up).
+   today), and, new, **whenever an id is forgotten** (`ForgetId`: a scan finding a changed or gone
+   binding, a route check before a send, a learned binding gone). Today the forget drops the
+   streams, which would lose G2's stream exactly when the record catches up. Now, in this order
+   (Codex round 2: the drain runs host code, and a handler that sends or switches the library off
+   must never see half a transition):
+   - **verify**, with the nonce still in place, each complete stream of that id against the new
+     binding (when the caller has one; a scan passes it) and its admission binding. Pure: no
+     handler, no floor, no state change;
+   - **take out** the streams that verified, with their sender, then **forget** as today (the
+     rest of the buffers, the nonces, the learned binding), and let the caller finish its own
+     transition (a scan rebuilds `S.peers`);
+   - **deliver** the taken streams on the next frame (`C_Timer.After(0)`, through `lib.impl`), in
+     completion order, through the usual floor or message window and enabled check. Skipped if the
+     session was wiped meanwhile (a session counter, bumped by `WipeSession`).
+
+   A stream so delivered after its id stopped being ours was proven by its own character's MAC,
+   under our nonce, before the forget: the old character's last words, as send-then-logout already
+   allows. It never makes the id a destination again.
 3. The wait for a complete stream (`AWAIT_HELLO`) goes from 10 s to 30 s, past the 13 s measured,
    within the same caps.
 
 **What it costs (a contract change, MINOR 7, stated in §1 and §5.3):**
-- A stream MAC'd under our previous nonce is dropped: one in flight across our `/reload`, or sent
-  before our new nonce reached the peer. Today Battle.net's binding delivers it. (The window is
-  short: after our reload our hello goes out at once, and AltStable measured that the peer doesn't
-  speak first.)
+- A stream MAC'd under our previous nonce is dropped. Our nonce for an id is new after every
+  session reset: our `/reload`, switching the last active instance off and on, a Battle.net
+  disconnect (`WipeSession`), and a forget of that id. A stream sent before our new nonce reached
+  the peer fails. Today Battle.net's binding delivers it. Our next hello goes out with the first
+  scan (5 s after login, sooner on a Battle.net event), not at once; AltStable measured that its
+  peer doesn't speak first, which keeps the window small for it, but that is a host's behaviour,
+  not a guarantee. The peer's own `/reload` changes only the nonce we send under, not this one.
 - A stream completing before its sender's key is trusted waits for the key-bearing hello (up to
-  30 s) instead of being delivered on Battle.net's word; dropped if that hello never comes.
+  30 s) instead of being delivered on Battle.net's word; dropped if that hello never comes. Trust
+  is what holds when the MAC is checked: a forgotten or evicted key, or the shared-key split
+  (§3), can also make a stream wait or fail. Our own key is still never trusted.
 - A stream the old character sent that is admitted only after the record names the new one
   verifies under neither binding and is dropped.
 - One payload SHA-256 per received stream (cached on the buffer), plus an HMAC per candidate and
@@ -1002,10 +1022,22 @@ grace window fixes that, since Battle.net is unordered.
 (#31: a missing binding read as the account having left, so a handle reassigned to another
 account could complete a stream unchecked) is gone with the MAC-free path.
 
+- Waiting longer means holding longer: a complete stream that can't verify keeps its slot and its
+  bytes for up to 30 s, within the same caps. Four waiting messages refuse a fifth on that
+  (sender, tag), eight streams fill the shared pool, and a Battle.net-verified stream waiting on a
+  bad MAC stays protected from MINOR 6's eviction. A newer snapshot of the tag still replaces a
+  waiting older one; in messages mode a later message that verifies is delivered before an
+  earlier one still waiting, as §1 allows, and the 256-sid window can age that one out.
+- 30 s is not a guarantee of recovery: the record may lag longer, and a stream that verifies under
+  neither binding at a forget is dropped with it.
+
 **Unchanged:** the wire, the store, the reasons enum, the proof and the `proven` values; `verified`
 at admission still decides eviction at the shared caps (MINOR 6); floors and message windows key
 on the GUID that verified. Upgrade: an older copy's buffers have `peer` (the admission binding)
-and maybe no hash; both are handled, and a buffer is never delivered unchecked for lack of a field.
+and maybe no hash or `seq`; both are handled, and a buffer is never delivered unchecked for lack of
+a field (a missing `peer` only removes that candidate). A buffer an older copy completed keeps its
+own `awaitUntil` (10 s). The guarantee starts when this copy takes over; it can't undo what an
+older copy delivered.
 
 **For the review:**
 - Is any delivery path left that credits a stream without its MAC?

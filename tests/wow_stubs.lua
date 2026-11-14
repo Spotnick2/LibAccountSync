@@ -3,7 +3,7 @@
 --
 -- What it models, on purpose:
 -- - STRICT globals: reading any global it does not define is an error. Each
---   stub is an API confirmed in the 1.60.1.70450 dump; defining something
+--   stub is an API confirmed in the 1.60.1.70938 dump; defining something
 --   Forever lacks is how a missing API survives into a build.
 -- - SECRETS as newproxy userdata: arithmetic, ordering, tostring, concat and
 --   indexing throw. Lua 5.1 cannot make a truth test or == throw, so those
@@ -240,6 +240,17 @@ function C_BattleNet.GetFriendGameAccountInfo(i, j)
     local id = (WoW.bn.friends[i] or {})[j]
     if not id or WoW.bn.friendInfoNil then return nil end
     return C_BattleNet.GetGameAccountInfoByID(id) or { gameAccountID = id }
+end
+-- A friend's account: its BattleTag, from its first game account's record
+-- (as GetAccountInfoByGUID derives it), or WoW.bn.friendTags[i].
+function C_BattleNet.GetFriendAccountInfo(i)
+    local ids = WoW.bn.friends[i]
+    if not ids then return nil end
+    local a = WoW.bn.accounts[ids[1]] or {}
+    local tag = (WoW.bn.friendTags or {})[i] or a.battleTag
+    if tag == nil and a.bnetAccountID ~= nil then tag = "Other#" .. a.bnetAccountID end
+    if WoW.bn.secret.battleTag then tag = WoW.Secret("battleTag") end
+    return { bnetAccountID = a.bnetAccountID, battleTag = tag, isFriend = true }
 end
 -- presenceID, battleTag: available even while our presence is blank.
 -- WoW.bn.presenceID models a presence id from ANOTHER namespace.

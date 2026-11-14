@@ -84,7 +84,8 @@ eq(#T.Sync.Peers(), 1, "the other account is a peer")
 
 -- 2. Every command runs, and nothing reaches chat.
 for _, cmd in ipairs({ "", "status", "send 500", "sendto", "sendto karuzo", "sendto Nobody", "kinds", "messages",
-                       "bytes", "hash", "secrets", "region", "friends", "ids", "ping", "ping 3", "presence" }) do
+                       "bytes", "hash", "secrets", "region", "friends", "ids", "ping", "ping 3", "presence",
+                       "handles" }) do
     local n = #WoW.errors
     local err = errs(las, cmd)
     check(not err, "/fp las " .. cmd .. " runs: " .. tostring(err))
@@ -230,8 +231,9 @@ local S = FP.Steps
 local names = {}
 for k in pairs(FP.procedures) do names[#names + 1] = k end
 table.sort(names)
-eq(table.concat(names, ","), "LibAccountSyncProbe/blank,LibAccountSyncProbe/check,LibAccountSyncProbe/relay",
-   "the three procedures are defined")
+eq(table.concat(names, ","),
+   "LibAccountSyncProbe/blank,LibAccountSyncProbe/check,LibAccountSyncProbe/handles,LibAccountSyncProbe/relay",
+   "the four procedures are defined")
 T.Probe:StartSteps("check")
 local rec = FP.db.steps.records["LibAccountSyncProbe/check"]
 local nSteps = #FP.procedures["LibAccountSyncProbe/check"].steps
@@ -350,6 +352,152 @@ WoW.fire("BN_CHAT_MSG_ADDON", "LASProbe", "PING|Friend-Realm|1760000001", "WHISP
 S.Run()
 eq(rec.results[3] and rec.results[3].check, "PASS", "a ping since the mark: PASS")
 S.Stop()
+
+-- 11b. 7.11 (#31): every id's GUID and Battle.net account, watched from the
+-- first world entry. An id that changes account is a REUSE, counted even
+-- when the handle went blank or vanished in between.
+check(logHas("handles: not started"), "/fp las handles before the world entry says so")
+check(T.Handles() == nil, "nothing is watched before the world entry")
+WoW.fire("PLAYER_ENTERING_WORLD", true, false)
+local H = T.Handles()
+check(H ~= nil and DB.handles == H, "a login starts the watch, in the saved table")
+check(logHas("handles: a new login"), "  and says so")
+check(logHas("handles: id 2 nothing -> online Player-1-0000000A own(guid) (login)"), "our own id is own, by its GUID")
+check(logHas("handles: id 3 nothing -> online Player-1-0000000B own(guid) (login)"), "so is the other account's")
+WoW.fire("PLAYER_ENTERING_WORLD", false, false)    -- a zone change
+check(T.Handles() == H, "a later world entry doesn't restart it")
+
+local function bt(tag) return "bt:" .. LibStub("LibAccountSync-1.0")._test.SHA256(tag):sub(1, 8) end
+local function bnEvent(...) for _, e in ipairs({ ... }) do WoW.fire(e) end end
+
+-- A character switch: a new GUID, the same account. Events are bunched.
+B.record.playerGuid = "Player-1-0000000D"
+bnEvent("BN_FRIEND_INFO_CHANGED", "BN_INFO_CHANGED")
+check(not logHas("Player-1-0000000D"), "nothing is read the moment an event fires")
+WoW.advance(1)
+check(logHas("handles: id 3 online Player-1-0000000B own(guid) -> online Player-1-0000000D own(guid) "
+    .. "(BN_FRIEND_INFO_CHANGED,BN_INFO_CHANGED)"), "a new GUID on the same account is logged, once for both events")
+eq(H.reuse, 0, "a character switch is no REUSE")
+
+-- An own account's id vanishes, then a stranger gets it.
+Peer.new({ id = 6, name = "Ownalt", guid = "Player-1-00000006" })
+bnEvent("BN_FRIEND_ACCOUNT_ONLINE"); WoW.advance(1)
+WoW.bn.accounts[6] = nil
+bnEvent("BN_FRIEND_ACCOUNT_OFFLINE"); WoW.advance(1)
+check(logHas("handles: id 6 online Player-1-00000006 own(guid) -> gone no-guid ?(last own)"),
+      "a vanished id keeps its last account")
+Peer.new({ id = 6, name = "Stranger", guid = "Player-1-00000099", bnet = 9 })
+bnEvent("BN_FRIEND_ACCOUNT_ONLINE"); WoW.advance(1)
+eq(H.reuse, 1, "a freed handle given to another account is a REUSE")
+check(logHas("handles: REUSE id 6, own -> " .. bt("Other#9") .. " (BN_FRIEND_ACCOUNT_ONLINE)"), "  logged as one")
+check(not logHas("Other#9"), "a friend's BattleTag is never logged, only its hash")
+
+-- A blank friend: its account comes from the friends list, and is kept while
+-- the id stays blank and unlisted; named by another account, it is a REUSE.
+Peer.new({ id = 7, name = "Pal", guid = "Player-1-00000007", bnet = 8, blank = true })
+WoW.bn.friends = { { 7 } }
+bnEvent("BN_FRIEND_LIST_SIZE_CHANGED"); WoW.advance(1)
+check(logHas("handles: id 7 nothing -> blank no-guid " .. bt("Other#8") .. "(friends)"),
+      "a blank friend's account is the friends list's")
+WoW.bn.friends = {}
+bnEvent("BN_FRIEND_LIST_SIZE_CHANGED"); WoW.advance(1)
+check(logHas("-> blank no-guid ?(last " .. bt("Other#8") .. ")"), "unlisted and still blank, it keeps its last account")
+local r7 = WoW.bn.accounts[7]
+r7.characterName, r7.playerGuid, r7.bnetAccountID = "Ownalt Two", "Player-1-0000000E", WoW.bn.me
+bnEvent("BN_FRIEND_INFO_CHANGED"); WoW.advance(1)
+eq(H.reuse, 2, "named by another account after a blank, it is a REUSE")
+
+-- The GUID's account and the friends list's disagree: logged and counted once.
+Peer.new({ id = 8, name = "Mixed", guid = "Player-1-00000008", bnet = 10 })
+WoW.bn.friends, WoW.bn.friendTags = { { 8 } }, { "Someone#11" }
+bnEvent("BN_FRIEND_INFO_CHANGED"); WoW.advance(1)
+eq(H.disagree, 1, "a GUID and a friends list that disagree are counted")
+check(logHas("handles: DISAGREE id 8, its GUID says " .. bt("Other#10") .. ", the friends list " .. bt("Someone#11")),
+      "  and logged")
+bnEvent("BN_FRIEND_INFO_CHANGED"); WoW.advance(1)
+eq(H.disagree, 1, "  once, not at every read")
+WoW.bn.friends, WoW.bn.friendTags = {}, nil
+
+-- With no event, the 30 s sweep still sees a change.
+WoW.bn.accounts[8].playerGuid = "Player-1-00000088"
+WoW.advance(30)
+check(logHas("-> online Player-1-00000088 " .. bt("Other#10") .. "(guid) (sweep)"), "the sweep reads without an event")
+
+-- Our own tag turning secret changes no account (Codex on #35): an account's
+-- key is its tag's hash, and which one is ours is learned apart.
+WoW.bn.secretSelfTag = true
+B.record.playerGuid = "Player-1-00000031"
+bnEvent("BN_INFO_CHANGED"); WoW.advance(1)
+check(logHas("-> online Player-1-00000031 own(guid) (BN_INFO_CHANGED)"), "with our tag secret, ours is still own")
+WoW.bn.secretSelfTag = false
+bnEvent("BN_INFO_CHANGED"); WoW.advance(1)
+eq(H.reuse, 2, "our tag turning secret and back is no REUSE")
+
+-- Secret fields: nothing throws, and nothing secret is a change of account.
+WoW.bn.secret = { characterName = true, playerGuid = true, isOnline = true, clientProgram = true, battleTag = true }
+check(not errs(las, "handles"), "/fp las handles survives secret fields")
+WoW.bn.secret = {}
+eq(H.reuse, 2, "secret fields are no REUSE")
+
+-- A /reload keeps the client's session; a login starts afresh.
+T.ResetHandles()
+T.StartHandles(DB, true)
+check(T.Handles() == H and H.reuse == 2, "a /reload carries the watch over, REUSEs included")
+check(logHas("handles: carried over a /reload"), "  and says so")
+WoW.bn.secretSelfTag = true                        -- our tag secret across a /reload
+T.ResetHandles()
+T.StartHandles(DB, true)
+B.record.playerGuid = "Player-1-00000032"
+bnEvent("BN_INFO_CHANGED"); WoW.advance(1)
+check(logHas("-> online Player-1-00000032 own(guid) (BN_INFO_CHANGED)"), "a /reload keeps our key while our tag is secret")
+eq(H.reuse, 2, "  and counts no REUSE")
+T.ResetHandles()
+T.StartHandles(DB, false)                          -- a login, our tag still secret
+check(T.Handles() ~= H and T.Handles().reuse == 0 and DB.handles == T.Handles(), "a login starts afresh")
+check(logHas("handles: id 3 nothing -> online Player-1-00000032 " .. bt("Owner#1") .. "(guid) (login)"),
+      "with our tag secret at login, ours shows as its key")
+WoW.bn.secretSelfTag = false
+bnEvent("BN_INFO_CHANGED"); WoW.advance(1)
+eq(T.Handles().reuse, 0, "learning our key later is no REUSE")
+check(not logHas("Player-1-00000032 " .. bt("Owner#1") .. "(guid) ->"), "  nor a change")
+
+-- 11c. The handles procedure: the other account pinned, switching
+-- character, leaving the game and coming back on another id.
+for _, id in ipairs({ 6, 7, 8 }) do WoW.bn.accounts[id] = nil end
+T.ResetHandles()
+T.StartHandles(DB, false)
+T.Probe:StartSteps("handles")
+rec = FP.db.steps.records["LibAccountSyncProbe/handles"]
+S.Next()
+S.Run()                                            -- 2: pin
+eq(outcome(2), "PASS", "the other account's id is pinned: " .. detail(2))
+S.Run()                                            -- 3: no switch made
+eq(outcome(3), "FAIL", "the same character is no switch: " .. detail(3))
+S.Back()
+B.record.playerGuid = "Player-1-00000010"
+S.Run()
+eq(outcome(3), "PASS", "another character on the account: " .. detail(3))
+check(detail(3):find("id 3, the same", 1, true), "  on the same id: " .. detail(3))
+S.Run()                                            -- 4: still in the game
+eq(outcome(4), "FAIL", "an account still in the game hasn't left: " .. detail(4))
+S.Back()
+WoW.bn.accounts[3] = nil
+S.Run()
+eq(outcome(4), "PASS", "the account left: " .. detail(4))
+check(detail(4):find("id 3 is now gone", 1, true), "  and its id is gone: " .. detail(4))
+WoW.bn.accounts[9] = B.record
+S.Run()                                            -- 5: back, on id 9; 6 runs on arrival
+eq(outcome(5), "PASS", "the account is back: " .. detail(5))
+check(detail(5):find("id 9, not the pinned one", 1, true), "  on another id: " .. detail(5))
+eq(outcome(6), "PASS", "no REUSE: " .. detail(6))
+S.Back()
+Peer.new({ id = 3, name = "Stranger", guid = "Player-1-00000099", bnet = 9 })
+S.Run()
+eq(outcome(6), "FAIL", "the pinned id given to a stranger fails the totals: " .. detail(6))
+S.Stop()
+WoW.bn.accounts[9] = nil
+WoW.bn.accounts[3] = B.record
+B.record.playerGuid = B.guid
 
 -- 12. Clearing empties the bound log in place; the next line lands in both.
 local log = DB.log

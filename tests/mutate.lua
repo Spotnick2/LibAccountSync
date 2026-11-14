@@ -323,6 +323,7 @@ local M = {
         'CLOCK = re.compile(r"()(\\d\\d):(\\d\\d):(\\d\\d)")' }, { "s, c = STAMP.match(line), CLOCK.match(line)",
         "s, c = STAMP.match(line), CLOCK.search(line)" }, { "int(c.group(1)) * 3600 + int(c.group(2)) * 60 + int(c.group(3))",
         "int(c.group(2)) * 3600 + int(c.group(3)) * 60 + int(c.group(4))" } }, WIRELOG },
+    { "wirelog: the default is the closed beta", { { [[\_forever_\WTF"]], [[\_classic_beta_\WTF"]] } }, WIRELOG },
     { "wirelog: the offset is not per run", { { "offsets[run] = secs - up", "offsets.setdefault(None, secs - up); offsets[run] = offsets[None]" } }, WIRELOG },
 }
 

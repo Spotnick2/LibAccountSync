@@ -77,5 +77,8 @@ with tempfile.TemporaryDirectory() as wtf:
     check("== account ACC1: 3 lines ==" in text, "main prints the account and the kept count: " + text.splitlines()[0])
     check("CHECK PASS: 1, nil" in text and "CHECK FAIL: 0 sent" in text, "  with the procedure's outcomes")
 
+# The default is the live client's WTF, where the deploy scripts install.
+check(W.DEFAULT_WTF.endswith(r"\_forever_\WTF"), "the default --wtf is _forever_'s: " + W.DEFAULT_WTF)
+
 print("test_wirelog: %d passed, %d failed" % (passed, failed))
 sys.exit(0 if failed == 0 else 1)

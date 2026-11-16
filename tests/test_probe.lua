@@ -512,6 +512,22 @@ check(logHas("bye: armed"), "/fp las bye arms it")
 WoW.fire("PLAYER_LOGOUT")
 check(logHas('bye at PLAYER_LOGOUT to "Karuzo": SendTo -> 1 nil; onResult sent nil during the call'),
       "the bye goes out at PLAYER_LOGOUT, handed over during the event")
+-- What ChatThrottleLib and the client did with it (Codex round 1 on the
+-- logout loss), and a control after it on the probe's own prefix.
+local beforeLine
+for _, l in ipairs(DB.log) do if l:find("bye: before the send", 1, true) then beforeLine = l end end
+local LS = LibStub("LibAccountSync-1.0").state
+check(beforeLine and beforeLine:find('to "Player-1-0000000B"; ChatThrottleLib v10000 queueing nil', 1, true),
+      "ChatThrottleLib's state is logged before the send: " .. tostring(beforeLine))
+check(logHas("bye: SendTo chose id 3 under its nonce " .. LS.theirNonce[3]:sub(1, 4)),
+      "  the destination SendTo chose, and the nonce the MAC is made under")
+check(logHas("bye: after the send, 1 client send(s) tried, the frame "), "  then the client send it tried, by size")
+check(logHas(" to id 3; ChatThrottleLib "), "  and the id the client was handed")
+local last, before = WoW.sent[#WoW.sent], WoW.sent[#WoW.sent - 1]
+check(last and last.prefix == "LASProbe" and last.target == 3 and tostring(last.text):match("^BYECTL|%d+$"),
+      "a control follows, on the probe's prefix, to the same id")
+check(before and before.prefix == "LibAcctSync", "  after the library's frame, never before it")
+check(logHas("bye: control on LASProbe to id 3 -> 0"), "  its client result logged")
 local byes = 0
 for _, r in ipairs(B:received("Probe", DB.sync)) do
     if r.payload:find("^BYE|") and r.macOk and T.Verdict(r.payload) == "BYE OK 60" then byes = byes + 1 end
@@ -520,10 +536,35 @@ eq(byes, 1, "the other account gets one verified bye")
 sentBefore = #WoW.sent
 WoW.fire("PLAYER_LOGOUT")
 eq(#WoW.sent, sentBefore, "  once: the next logout sends nothing")
+-- One GUID bound to two ids (PLAN §1, SendTo; test_transport 19d): SendTo
+-- picks the one holding a nonce, and the log and the control follow its
+-- pick, whichever id is seen first (Codex on #45). Only the nonces are set
+-- by hand here, to put the nonce on each id in turn.
+local B6 = Peer.new({ id = 6, name = B.name, guid = B.guid })
+T.Sync.Rescan()
+B6:deliver(B6:hello({ key = B6.key }))
+check(LS.peers[6] and LS.peers[6].guid == B.guid and LS.theirNonce[6], "(two ids bound to one GUID, both with a nonce)")
+for _, holder in ipairs({ 6, 3 }) do
+    local other = holder == 6 and 3 or 6
+    local saved = LS.theirNonce[other]
+    LS.theirNonce[other] = nil
+    las("bye")
+    WoW.fire("PLAYER_LOGOUT")
+    check(logHas(("bye: SendTo chose id %d under its nonce %s"):format(holder, LS.theirNonce[holder]:sub(1, 4))),
+          ("the nonce on id %d only: the log names the id SendTo chose"):format(holder))
+    local frame, ctl = WoW.sent[#WoW.sent - 1], WoW.sent[#WoW.sent]
+    check(frame and frame.prefix == "LibAcctSync" and frame.target == holder, "  the library's frame went there")
+    check(ctl and ctl.prefix == "LASProbe" and ctl.target == holder, "  and the control follows it")
+    LS.theirNonce[other] = saved
+end
+WoW.bn.accounts[6] = nil
+T.Sync.Rescan()
+eq(#T.Sync.Peers(), 1, "(id 6 gone again)")
 WoW.ctlDefer = true                                -- ChatThrottleLib holds it: no result during the event
 las("bye")
 WoW.fire("PLAYER_LOGOUT")
 check(logHas("SendTo -> 1 nil; onResult none;"), "a held bye says so: no result during the event")
+check(logHas("bye: after the send, 0 client send(s) tried;"), "  and that ChatThrottleLib didn't try the client")
 WoW.ctlQueue, WoW.ctlDefer = {}, false             -- the logout tears the queue down
 
 -- Received: a verified bye is counted; anything else is not. Its raw frame
@@ -538,10 +579,58 @@ eq(T.Byes(), heard + 1, "a bye is counted")
 eq(T.RawByes(), raw + 1, "  and its frame, as received")
 check(logHas("BYE OK 60"), "  and verified")
 check(logHas("raw bye frame received from id 3, sid 1760000000901"), "  its raw receipt logged, by sid")
+-- The trace: what the library held as it landed, and each of its decisions.
+check(logHas("trace: bye 3|Probe|1760000000901 reaches the library: record online Player-1-0000000B; "
+             .. "peer Player-1-0000000B/bnet; learned -; our nonce "), "the trace logs the record and the binding as it lands")
+check(logHas("trace: MAC check of 3|Probe|1760000000901 under our nonce "), "  its MAC check")
+check(logHas(", candidates [Player-1-0000000B, Player-1-0000000B]: verified as Player-1-0000000B"),
+      "  with its candidates and the one that verified")
+check(logHas("trace: delivery of 3|Probe|1760000000901: done; finished"), "  and its delivery")
+check(logHas("trace: bye 3|Probe|1760000000901 after admission: finished"), "  and what admission left")
+-- A bye below the snapshot floor: finished, but never handed to OnMessage.
+B:send("Probe", bye(1760000000), { sid = "1760000000800" })
+eq(T.Byes(), heard + 1, "a bye under the floor is not delivered")
+check(logHas("trace: delivery of 3|Probe|1760000000800: done (finished, but not handed to OnMessage"),
+      "  and the trace says it was finished without reaching OnMessage")
+-- A bye whose MAC doesn't verify waits, then is dropped at the end of its wait.
+B:send("Probe", bye(1760000006), { sid = "1760000000906", mac = string.rep("0", 32) })
+check(logHas("trace: MAC check of 3|Probe|1760000000906 under our nonce "), "a bad MAC is checked")
+check(logHas("[Player-1-0000000B, Player-1-0000000B]: the MAC verified for no candidate"), "  and fails for every candidate")
+WoW.advance(31)
+check(logHas("trace: 3|Probe|1760000000906 dropped at the end of its wait"), "  then is dropped at the end of its wait")
+eq(T.Byes(), heard + 1, "  undelivered")
+-- The logout measured on 2026-11-14: the record already reads offline when
+-- the frame lands. Admitted on our nonce with no binding, the MAC has no
+-- candidate, and the forget drops it (hypothesis (a), as the library stands).
+B.record.isOnline = false
+B:send("Probe", bye(1760000005), { sid = "1760000000905" })
+check(logHas("trace: bye 3|Probe|1760000000905 reaches the library: record offline Player-1-0000000B; peer Player-1-0000000B/bnet"),
+      "a frame landing after the record went offline: the trace says so")
+check(logHas("trace: bye 3|Probe|1760000000905 after admission: held (complete, admitted as -)"), "  admitted with no binding")
+check(logHas("candidates [none, none]: no candidate to check"), "  its MAC with no candidate to check")
+T.Sync.Rescan()
+check(logHas("trace: forget id 3, new binding -: record offline"), "the forget is traced")
+check(logHas("trace:   3|Probe|1760000000905: not held"), "  and the bye dropped with it")
+eq(T.Byes(), heard + 1, "  undelivered")
+B.record.isOnline = true
+T.Sync.Rescan()
+check(logHas("trace: new nonce "), "a new nonce for the id is traced")
+B:deliver(B:hello({ key = B.key }))
+eq(#T.Sync.Peers(), 1, "back as a peer")
+WoW.fire("BN_DISCONNECTED")
+check(logHas("trace: session wiped"), "a session wipe is traced")
+WoW.fire("BN_CONNECTED")
+T.Sync.Rescan()
+B:deliver(B:hello({ key = B.key }))
+eq(#T.Sync.Peers(), 1, "and again after the wipe")
+local ctls, pingsNow = T.CtlByes(), T.Pings()
+WoW.fire("BN_CHAT_MSG_ADDON", "LASProbe", "BYECTL|1760000000", "WHISPER", 3)
+eq(T.CtlByes(), ctls + 1, "a control bye is counted")
+eq(T.Pings(), pingsNow, "  not as a ping")
 -- From an id the library can't admit (its record gone before the frame landed).
 B:send("Probe", bye(1760000003), { sid = "1760000000903", id = 7 })
 eq(T.Byes(), heard + 1, "a bye the library refuses is not delivered")
-eq(T.RawByes(), raw + 2, "  but its frame is counted as received")
+eq(T.RawByes(), raw + 5, "  but its frame is counted as received (the trace's three byes above, and this one)")
 local pings = T.Pings()
 WoW.fire("BN_CHAT_MSG_ADDON", "OtherAddon", "PING|x|1", "WHISPER", 3)
 eq(T.Pings(), pings, "another addon's prefix is not a ping")
@@ -560,11 +649,13 @@ eq(outcome(3), "PASS", "a bye after the /reload: " .. detail(3))
 check(detail(3):find("1 delivered, 1 raw frame(s) received", 1, true), "  delivered and received: " .. detail(3))
 S.Run()                                            -- 4: Ready marks again; 5: waiting
 B:send("Probe", bye(1760000004), { sid = "1760000000904", id = 7 })   -- arrives, refused
+WoW.fire("BN_CHAT_MSG_ADDON", "LASProbe", "BYECTL|1760000004", "WHISPER", 3)   -- its control does
 WoW.advance(61)
 S.Poll()
 eq(rec.results[5] and rec.results[5].status, "timeout", "no bye after the logout: the wait times out")
 eq(outcome(5), "FAIL", "  as a FAIL: " .. detail(5))
 check(detail(5):find("received but not delivered", 1, true), "  that says the frame arrived and the library kept it: " .. detail(5))
+check(detail(5):find("1 raw frame(s) received, 1 control(s)", 1, true), "  and counts the control since Ready: " .. detail(5))
 S.Stop()
 
 -- 12. Clearing empties the bound log in place; the next line lands in both.

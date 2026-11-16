@@ -160,9 +160,28 @@ Each tag's delivery has one of two meanings, chosen at `New`:
   - AltStable measured on 70938 that such a message arrived after a `/reload` and not after a
     logout to the character list. `/fp steps las logout` measures where it goes missing: the
     sender logs whether it was handed to the client during the event, and the receiver counts the
-    raw frame (before the library's checks) apart from the delivery. Handed over but never
+    raw frame (seen apart from the library) apart from the delivery. Handed over but never
     received is the client's loss; received but not delivered is the receiving library's (its
     sender's record gone before the frame landed, say).
+  - **Measured 2026-11-14, build 70938, MINOR 7** (one round each way, two accounts on one
+    machine):
+    - Drucida as sender: both byes (`/reload`, then logout) were **queued by ChatThrottleLib**
+      (no result during the event, `bQueueing` true after the call) and nothing reached the
+      other client. A queue dies with the UI.
+    - Kaleidria as sender: both went out during the event (`onResult` "sent", not queueing).
+      After the `/reload` it was delivered 0.3 s later. After the logout to the character list
+      the raw frame **arrived** (so the client sends it) 0.4 s before the receiver's probe saw
+      the record go offline, and the library **never delivered it**. The likeliest reading:
+      the record already read offline when the frame landed, so it was admitted on our nonce
+      with no binding, its MAC had no candidate, and the forget dropped it (r6 has no path
+      for that either). An id forgotten before the frame landed fits the log too (Codex
+      round 1 on the logout loss).
+    - Open: why ChatThrottleLib queued one account's bye ~70 s after login, and which of the
+      two readings holds. The probe now traces both: ChatThrottleLib's state before and after
+      the send and the client sends it tried; a control frame on the probe's own prefix after
+      the bye; and on the receiver the record and the library's binding, nonces, admission,
+      MAC check, forget and delivery for each bye. A fix waits for that trace (the id's last
+      known character as a MAC candidate is the sound option Codex reviewed).
   - Until then, a host must not depend on a goodbye: a timeout has to end a sender that left
     without one, as AltStable's 50 s silence does.
 - **Reasons, a frozen enum:** `disabled`, `no-peers`, `too-large`, `not-ready`, `offline`,

@@ -252,7 +252,8 @@ end
 -- Messages seen this session, per batch: a second delivery of one is logged.
 local seenMsg = {}
 local byesHeard = 0     -- #38: messages the other account sent from its PLAYER_LOGOUT, delivered
-local rawByes = 0       -- #38: their data frame as the client handed it over, before the library
+local rawByes = 0       -- #38: their data frame as the client handed it over, seen apart from the library
+local ctlByes = 0       -- #38: the control each bye is followed by, on the probe's own prefix
 local LAS_PREFIX = "LibAcctSync"   -- wire 1's prefix (frozen)
 
 local function OnMessageFor(tag)
@@ -587,6 +588,200 @@ local function StartHandles(db, isReloadingUi)
 end
 
 --------------------------------------------------------------------------------
+-- #38 trace: why a bye was held back, or received and not delivered
+--------------------------------------------------------------------------------
+-- Codex round 1 on the logout loss: the counts can't tell a record that read
+-- blank when the frame landed from an id forgotten before it, so the
+-- library's own decisions are logged. Read-only views of lib.state, and
+-- pass-through wrappers on lib.impl that log only for a bye's stream and for
+-- ids holding our nonce: never a key, a MAC or a payload, and a nonce as its
+-- first four characters (as Diagnostics shows it). Nothing here calls what
+-- could change the outcome (GameFor, Route, a scan). Never shipped.
+
+local function Lib() return LibStub("LibAccountSync-1.0", true) end
+local function N4(n) return type(n) == "string" and n:sub(1, 4) or "-" end
+local function Num(v) return type(v) == "number" and ("%.1f"):format(v) or tostring(v) end
+local function PeerText(p)
+    if type(p) ~= "table" then return "-" end
+    return tostring(p.guid) .. "/" .. tostring(p.proven)
+end
+
+-- What Battle.net says of an id now, and what the library holds for it.
+local function IdState(id)
+    local lib = Lib()
+    local S = lib.state
+    local rec, r = lib.impl.GameRec(id), "none"
+    if rec and rec.unknown then
+        r = "secret"
+    elseif rec then
+        local guid = type(rec.playerGuid) == "string" and rec.playerGuid ~= "" and rec.playerGuid or "no-guid"
+        r = (rec.isOnline == false and "offline " or rec.isOnline == true and "online " or "online? ") .. guid
+    end
+    return ("record %s; peer %s; learned %s; our nonce %s, theirs %s"):format(r, PeerText(S.peers[id]),
+        PeerText(S.learned[id]), N4(S.myNonce[id]), N4(S.theirNonce[id]))
+end
+
+-- What became of a stream, by the library's key (id|tag|sid).
+local function BufState(key)
+    local S = Lib().state
+    local b = S.buffers[key]
+    if b then
+        return ("held (%s, admitted as %s%s%s)"):format(b.complete and "complete" or "incomplete", PeerText(b.peer),
+            b.verified and ", verified" or "", b.as and (", pinned to " .. PeerText(b.as)) or "")
+    end
+    if S.finished[key] then return "finished" end
+    if S.refused[key] then return "refused" end
+    return "not held (never admitted, or dropped)"
+end
+
+local BYE_FRAME = "^D1|Probe|(%d+)|1|1|%x+|BYE|%d+|%d+|%u+|"
+local traced = {}          -- the library's key of every bye stream seen this session
+local function KeyOf(buf) return ("%s|%s|%s"):format(tostring(buf.id), tostring(buf.tag), tostring(buf.sidText)) end
+local function TracedOf(id)
+    local out = {}
+    for key in pairs(traced) do
+        if key:match("^(%d+)|") == tostring(id) then out[#out + 1] = key end
+    end
+    table.sort(out)
+    return out
+end
+
+local function Wrap(I, name, make)
+    if type(I[name]) == "function" then I[name] = make(I[name]) end
+end
+
+-- While a bye is handed over: the client sends of LibAccountSync's prefix it
+-- tried (count, last size, last id), and the destination SendTo itself
+-- picked, with the nonce its MAC is made under. One GUID can be bound to two
+-- ids (PLAN §1, SendTo), so the probe never guesses the id (Codex on #45).
+local watchingSends, apiSends, apiLen, apiId, byePick = false, 0, nil, nil, nil
+
+local function TraceLibrary()
+    local lib = Lib()
+    if not lib or type(lib.impl) ~= "table" or type(lib.state) ~= "table" then return end
+    local I, S = lib.impl, lib.state
+    Wrap(I, "OnData", function(orig) return function(id, text)
+        local sid = type(text) == "string" and text:match(BYE_FRAME)
+        if not sid then return orig(id, text) end
+        local key = id .. "|Probe|" .. sid
+        traced[key] = true
+        Log(("trace: bye %s reaches the library: %s"):format(key, IdState(id)))
+        orig(id, text)
+        Log(("trace: bye %s after admission: %s"):format(key, BufState(key)))
+    end end)
+    Wrap(I, "Verify", function(orig) return function(buf, nonce, me, ...)
+        local key = type(buf) == "table" and KeyOf(buf)
+        if not key or not traced[key] then return orig(buf, nonce, me, ...) end
+        local cands, any = {}, false
+        for i = 1, select("#", ...) do
+            local c = select(i, ...)
+            cands[#cands + 1] = type(c) == "table" and tostring(c.guid) or "none"
+            any = any or type(c) == "table"
+        end
+        local sender, k = orig(buf, nonce, me, ...)
+        local why
+        if sender then why = "verified as " .. tostring(sender.guid)
+        elseif not nonce then why = "no nonce for the id"
+        elseif not buf.mac then why = "no MAC"
+        elseif not me or me.project == nil or me.region == nil then why = "our own identity unknown"
+        elseif not any then why = "no candidate to check"
+        else why = "the MAC verified for no candidate" end
+        Log(("trace: MAC check of %s under our nonce %s, candidates [%s]: %s"):format(key, N4(nonce),
+            table.concat(cands, ", "), why))
+        return sender, k
+    end end)
+    Wrap(I, "TryDeliver", function(orig) return function(key, buf)
+        if not traced[key] then return orig(key, buf) end
+        local before = byesHeard
+        local ok = orig(key, buf)
+        local note = ""
+        if ok and byesHeard == before then note = " (finished, but not handed to OnMessage: floor, window or switched off)" end
+        Log(("trace: delivery of %s: %s%s; %s"):format(key, ok and "done" or "not yet", note, BufState(key)))
+        return ok
+    end end)
+    Wrap(I, "ForgetId", function(orig) return function(id, now)
+        local keys = TracedOf(id)
+        if not S.myNonce[id] and #keys == 0 then return orig(id, now) end
+        Log(("trace: forget id %s, new binding %s: %s"):format(tostring(id), PeerText(now), IdState(id)))
+        orig(id, now)
+        for _, key in ipairs(keys) do Log(("trace:   %s: %s"):format(key, BufState(key))) end
+    end end)
+    Wrap(I, "WipeSession", function(orig) return function(...)
+        if next(S.myNonce) or next(S.buffers) then Log("trace: session wiped: every nonce and held stream dropped") end
+        return orig(...)
+    end end)
+    Wrap(I, "NonceFor", function(orig) return function(id)
+        local had = S.myNonce[id]
+        local n = orig(id)
+        if not had then Log(("trace: new nonce %s for id %s"):format(N4(n), tostring(id))) end
+        return n
+    end end)
+    -- SendTo's pick, observed as it returns: nothing is decided here.
+    Wrap(I, "TargetIds", function(orig) return function(target)
+        local ids = orig(target)
+        if watchingSends and not byePick then
+            local id = type(ids) == "table" and ids[1] or nil
+            byePick = { id = id, nonce = id and S.theirNonce[id] }
+        end
+        return ids
+    end end)
+    Wrap(I, "Settle", function(orig) return function(key, buf)
+        if not traced[key] then return orig(key, buf) end
+        local held = S.buffers[key] == buf
+        orig(key, buf)
+        if held and S.buffers[key] == nil and not S.finished[key] then
+            Log(("trace: %s dropped at the end of its wait"):format(key))
+        end
+    end end)
+end
+
+-- ChatThrottleLib, read only: it sends at once only when nothing is queued
+-- and the frame (plus its overhead) is under the bandwidth UpdateAvail refills
+-- from the time since the last refill, the post-login throttle and the
+-- framerate. So those inputs are logged with each priority's queues.
+local function CtlState()
+    local ctl = rawget(_G, "ChatThrottleLib")
+    if type(ctl) ~= "table" then return "absent" end
+    local now = GetTime()
+    local last, hard = rawget(ctl, "LastAvailUpdate"), rawget(ctl, "HardThrottlingBeginTime")
+    local fps = rawget(_G, "GetFramerate")
+    local parts = {
+        ("v%s queueing %s avail %s"):format(tostring(rawget(ctl, "version")), tostring(rawget(ctl, "bQueueing")),
+            Num(rawget(ctl, "avail"))),
+        ("%s s since its refill, %s s since its hard throttle began"):format(
+            type(last) == "number" and Num(now - last) or "?", type(hard) == "number" and Num(now - hard) or "?"),
+        ("fps %s (min %s), MAX_CPS %s, BURST %s"):format(type(fps) == "function" and Num(fps()) or "?",
+            tostring(rawget(ctl, "MIN_FPS")), tostring(rawget(ctl, "MAX_CPS")), tostring(rawget(ctl, "BURST"))),
+    }
+    local prios = rawget(ctl, "Prio")
+    if type(prios) == "table" then
+        for _, name in ipairs({ "ALERT", "NORMAL", "BULK" }) do
+            local p = prios[name]
+            if type(p) == "table" then
+                parts[#parts + 1] = ("%s ring %s, blocked %s, avail %s"):format(name,
+                    type(p.Ring) == "table" and p.Ring.pos and "busy" or "empty",
+                    type(p.Blocked) == "table" and p.Blocked.pos and "busy" or "empty", Num(p.avail))
+            end
+        end
+    end
+    return table.concat(parts, "; ")
+end
+
+-- The client sends of LibAccountSync's prefix while a bye is handed over: one
+-- tried with no onResult means the client throttled it and ChatThrottleLib
+-- queued it; none tried means ChatThrottleLib queued it without trying.
+local function WatchClientSends()
+    if type(C_BattleNet) ~= "table" or type(C_BattleNet.SendGameData) ~= "function" then return end
+    hooksecurefunc(C_BattleNet, "SendGameData", function(id, prefix, text)
+        if watchingSends and not IsS(prefix) and prefix == LAS_PREFIX then
+            apiSends = apiSends + 1
+            if not IsS(text) and type(text) == "string" then apiLen = #text end
+            if not IsS(id) then apiId = id end
+        end
+    end)
+end
+
+--------------------------------------------------------------------------------
 -- #38: a send from PLAYER_LOGOUT
 --------------------------------------------------------------------------------
 -- Armed by /fp las bye, for this session's next PLAYER_LOGOUT (a /reload, a
@@ -594,9 +789,14 @@ end
 -- handed the frame to the client during the event: ChatThrottleLib sends at
 -- once when it isn't queueing and has bandwidth, and then calls onResult
 -- before SendTo returns, with the client's result. If it did, and the other
--- client never even received the frame (its raw BN_CHAT_MSG_ADDON, counted
--- before the library's checks), the client dropped it. A frame received but
--- not delivered is the receiving library's doing (Codex on #43).
+-- client never even received the frame (its raw BN_CHAT_MSG_ADDON, seen by
+-- the probe apart from the library), the client dropped it. A frame received
+-- but not delivered is the receiving library's doing (Codex on #43); the
+-- trace above says which of its checks. After the library's frame (never
+-- before: ChatThrottleLib counts every client send against its bandwidth), a
+-- control goes to the same id on the probe's own prefix, straight to the
+-- client: it arriving when the library's frame didn't puts the loss on the
+-- way out (Codex round 1 on the logout loss).
 
 local BYE_SIZE = 60
 local byeArmed = false
@@ -606,16 +806,27 @@ local function ByeAtLogout()
     byeArmed = false
     local p = FindPeer(nil)
     if not p then Log("bye at PLAYER_LOGOUT: no peer, nothing sent"); return end
+    Log(("bye: before the send, to %s; ChatThrottleLib %s"):format(V(p.guid), CtlState()))
     local payload = Padded(("BYE|%d|%d|LOGOUT|"):format(BYE_SIZE, time()), BYE_SIZE)
     local during, result = true, "none"
+    watchingSends, apiSends, apiLen, apiId, byePick = true, 0, nil, nil, nil
     local count, why = Sync.SendTo(p.guid, payload, function(_, status, reason)
         result = ("%s %s %s"):format(status, tostring(reason), during and "during the call" or "after it")
     end)
-    during = false
+    during, watchingSends = false, false
     local ctl = rawget(_G, "ChatThrottleLib")
     local queueing = type(ctl) == "table" and tostring(rawget(ctl, "bQueueing")) or "?"
     Log(("bye at PLAYER_LOGOUT to %s: SendTo -> %s %s; onResult %s; ChatThrottleLib queueing %s"):format(
         V(p.name), tostring(count), tostring(why), result, queueing))
+    local id = byePick and byePick.id
+    Log(("bye: SendTo chose id %s under its nonce %s"):format(tostring(id), N4(byePick and byePick.nonce)))
+    Log(("bye: after the send, %d client send(s) tried%s; ChatThrottleLib %s"):format(apiSends,
+        apiLen and (", the frame %d bytes + overhead %s, to id %s"):format(apiLen,
+            tostring(type(ctl) == "table" and rawget(ctl, "MSG_OVERHEAD")), tostring(apiId)) or "", CtlState()))
+    if id then
+        local ok, r = pcall(C_BattleNet.SendGameData, id, PROBE_PREFIX, ("BYECTL|%d"):format(time()))
+        Log(("bye: control on %s to id %s -> %s"):format(PROBE_PREFIX, tostring(id), ok and V(r) or ("ERROR " .. tostring(r))))
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -905,12 +1116,13 @@ Probe:Steps("handles", {
 -- Receipt and delivery are counted apart (Codex on #43): a frame the client
 -- handed over that the library then refused or held (its sender's record gone
 -- before the frame landed, say) is not the client's loss.
-local byeMark, rawMark = 0, 0
+local byeMark, rawMark, ctlMark = 0, 0, 0
 local function ByeDetail()
-    local delivered, raw = byesHeard - byeMark, rawByes - rawMark
-    local d = ("%d delivered, %d raw frame(s) received"):format(delivered, raw)
-    if raw > 0 and delivered == 0 then d = d .. ": received but not delivered (the library refused or held it)" end
-    if raw == 0 then d = d .. ": nothing reached this client" end
+    local delivered, raw, ctl = byesHeard - byeMark, rawByes - rawMark, ctlByes - ctlMark
+    local d = ("%d delivered, %d raw frame(s) received, %d control(s)"):format(delivered, raw, ctl)
+    if raw > 0 and delivered == 0 then d = d .. ": received but not delivered (the library refused or held it; see the trace)" end
+    if raw == 0 and ctl > 0 then d = d .. ": the library's frame never came, the control did" end
+    if raw == 0 and ctl == 0 then d = d .. ": nothing reached this client" end
     return d
 end
 local function ByeWait(how)
@@ -929,11 +1141,11 @@ Probe:Steps("logout", {
     rev = 1,
     { text = steadyText },
     { text = "On the OTHER account, type /fp las bye. Then press Ready here, and only then type /reload "
-          .. "on the OTHER account.", button = "Ready", run = function() byeMark, rawMark = byesHeard, rawByes; return byeMark end },
+          .. "on the OTHER account.", button = "Ready", run = function() byeMark, rawMark = byesHeard, rawByes; ctlMark = ctlByes; return byeMark end },
     ByeWait("/reload"),
     { text = "On the OTHER account, type /fp las bye again. Then press Ready here, and only then log the "
           .. "OTHER account out to the character list (Menu, Log Out; not /reload).", button = "Ready",
-      run = function() byeMark, rawMark = byesHeard, rawByes; return byeMark end },
+      run = function() byeMark, rawMark = byesHeard, rawByes; ctlMark = ctlByes; return byeMark end },
     ByeWait("logout to the character list"),
     { text = "Log the OTHER account back in (any character) and /reload there, so its log of both sends "
           .. "is saved. Then /reload here.", reload = true },
@@ -983,17 +1195,23 @@ frame:SetScript("OnEvent", function(_, event, ...)
         local prefix, text, _, senderID = ...
         if IsS(prefix) then return end
         if prefix == LAS_PREFIX then
-            -- #38: a bye's single data frame, seen before the library's checks.
+            -- #38: a bye's single data frame, seen apart from the library (in no
+            -- set order with its handler; the trace has what it did).
             -- Only its sid is logged, never the MAC or the body.
             local sid = not IsS(text) and type(text) == "string"
                 and text:match("^D1|Probe|(%d+)|1|1|%x+|BYE|%d+|%d+|%u+|")
             if sid then
                 rawByes = rawByes + 1
-                Log(("raw bye frame received from id %s, sid %s, before the library's checks"):format(V(senderID), sid))
+                Log(("raw bye frame received from id %s, sid %s, seen apart from the library"):format(V(senderID), sid))
             end
             return
         end
         if prefix ~= PROBE_PREFIX then return end
+        if not IsS(text) and type(text) == "string" and text:match("^BYECTL|%d+$") then
+            ctlByes = ctlByes + 1
+            Log(("control bye received from id %s"):format(V(senderID)))
+            return
+        end
         pingsHeard = pingsHeard + 1
         local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, senderID)
         Log(("PING received from id %s: %s"):format(V(senderID), V(text)))
@@ -1016,9 +1234,11 @@ Msgs = LAS:New({ addon = "ProbeMsg", store = Store, report = Report, messages = 
 Sync.OnMessage(OnMessageFor("Probe"))
 Kinds.OnMessage(OnMessageFor("ProbeST"))
 Msgs.OnMessage(OnMessageFor("ProbeMsg"))
+TraceLibrary()
+WatchClientSends()
 
 NS._test = { Probe = Probe, Sync = Sync, Kinds = Kinds, Msgs = Msgs, Verdict = Verdict, Padded = Padded,
-             Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end, Byes = function() return byesHeard end, RawByes = function() return rawByes end,
+             Sized = Sized, AllBytes = AllBytes, Pings = function() return pingsHeard end, Byes = function() return byesHeard end, RawByes = function() return rawByes end, CtlByes = function() return ctlByes end,
              Round = function() return round end, Tally = function() return Tally() end,
              Handles = function() return handles end, StartHandles = StartHandles,
              ResetHandles = function() handles = nil end }

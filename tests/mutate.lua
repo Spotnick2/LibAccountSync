@@ -42,6 +42,20 @@ local M = {
     { "MAC: the wait stays 10 s", { { "local AWAIT_HELLO = 30", "local AWAIT_HELLO = 10" } } },
     { "MAC: hashed with no candidate to check", { { "    local tried, keys = {}, nil\n",
         "    buf.hash = buf.hash or SHA256(buf.payload)\n    local tried, keys = {}, nil\n" } } },
+    -- The held binding at admission (MINOR 8, #38; test_switch 11-18)
+    { "held: no fallback at admission", { { "verified = verified, peer = p or I.HeldBinding(id) }", "verified = verified, peer = p }" } } },
+    { "held: the fallback makes room at the caps", { { '        local verified = p ~= nil and p.proven == "bnet"\n',
+        '        local verified = (p or I.HeldBinding(id)) ~= nil and (p or I.HeldBinding(id)).proven == "bnet"\n' } } },
+    { "held: the live binding, not a copy", { { "    return { id = id, guid = p.guid, name = p.name, realm = p.realm, faction = p.faction, proven = p.proven }\n",
+        "    return p\n" } } },
+    { "held: the held binding passes without its MAC", {
+        { "            sender, k = I.Verify(buf, S.myNonce[id], I.Self(), now, buf.peer)\n",
+          "            sender, k = I.Verify(buf, S.myNonce[id], I.Self(), now, buf.peer)\n            if not sender and not now and buf.peer then sender = buf.peer end\n" } } },
+    { "held: an older copy's stream is backfilled", { { "local sender, k = I.Verify(buf, nonce, me, now, buf.peer)",
+        "local sender, k = I.Verify(buf, nonce, me, now, buf.peer or I.HeldBinding(id))" } } },
+    { "held: an incomplete stream outlives the forget", { { "            if buf.as then pinned = true else S.buffers[key] = nil end",
+        "            if buf.as or not buf.complete then pinned = true else S.buffers[key] = nil end" } } },
+    { "held: a blank peer gone offline is kept", { { "        I.ForgetId(id)           -- gone, or no longer blank: Battle.net decides now\n", "" } } },
 
     -- Ownership fails closed (§5.1, §5.2)
     { "friends list: no settle wait", { { "if (time() - S.upSince) < FRIENDS_SETTLE then return nil end", "" } } },
@@ -122,7 +136,7 @@ local M = {
         { '    if not IsSecret(second) and type(second) == "string" and second ~= "" then',
           '    if second ~= nil and second ~= "" then' } } },
     { "MINOR not raised over the pilot copy", {
-        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 7', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
+        { 'local MAJOR, MINOR = "LibAccountSync-1.0", 8', 'local MAJOR, MINOR = "LibAccountSync-1.0", 1' } } },
     -- (No "MINOR left at 2" mutation: that is what test_upgrade 4d's freeze
     -- guard catches in a normal run, since r2's manifest no longer matches,
     -- and that guard is off here because every mutant differs from r2.)

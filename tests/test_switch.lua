@@ -216,4 +216,156 @@ do
        "good", "this copy delivers the one whose MAC verifies, never the other")
 end
 
+--------------------------------------------------------------------------------
+-- MINOR 8 (#38): a frame admitted while Battle.net's record has nothing (at a
+-- logout its offline reaches us before the last frame, measured 2026-11-17)
+-- takes the binding the library holds as its admission binding. The MAC
+-- still decides; nothing else changes (Codex round 2 on the logout loss).
+--------------------------------------------------------------------------------
+
+-- The record as measured at a logout to the character list: offline, no GUID.
+local function offline(B)
+    B.record.isOnline, B.record.playerGuid, B.record.characterName = false, nil, nil
+end
+local function heldBuffer(lib)
+    for _, b in pairs(lib.state.buffers) do return b end
+end
+
+-- 11. The measured sequence: one-frame bye from G1 after its record went
+--     offline, then the scan. Delivered at once as G1, Battle.net's binding.
+do
+    local lib, inst, store, B = verified()
+    local box = inbox(inst)
+    offline(B)
+    B:send("GlassChat", "bye", { sid = "1760000000400" })
+    eq(senders(box), "bye@" .. G1, "a bye landing after the record went offline is delivered as G1")
+    eq(box[1] and box[1].sender.proven, "bnet", "  proven as the binding it verified against was")
+    inst.Rescan()
+    WoW.advance(31)
+    eq(#box, 1, "  once: the scan's forget finds nothing left")
+    eq(lib.state.myNonce[3], nil, "  and the id is forgotten, its nonce with it")
+end
+
+-- 12. A stream admitted offline holds a copy of the binding, not Battle.net's
+--     word: not `verified` (no room made at the caps), not the live table.
+--     Completed before the forget: delivered as G1.
+do
+    local lib, inst, store, B = verified()
+    local box = inbox(inst)
+    offline(B)
+    local fr = B:frames("GlassChat", string.rep("g", 600), { sid = "1760000000401" })
+    B:deliver(fr[1])
+    local buf = heldBuffer(lib)
+    check(buf and buf.peer and buf.peer.guid == G1, "admitted offline with the held binding, G1")
+    eq(buf and buf.verified, false, "  not verified: Battle.net doesn't vouch now")
+    check(buf and buf.peer ~= lib.state.peers[3], "  a copy, not the live binding")
+    lib.state.peers[3].guid = G2                        -- the live table changes under it
+    eq(buf and buf.peer.guid, G1, "  which a later change to the live binding doesn't rewrite")
+    lib.state.peers[3].guid = G1
+    for i = 2, #fr do B:deliver(fr[i]) end
+    eq(senders(box), string.rep("g", 600) .. "@" .. G1, "completed before the forget: delivered as G1")
+end
+
+-- 13. Still incomplete at the forget: dropped, and its later chunks find no
+--     nonce (a stated loss).
+do
+    local lib, inst, store, B = verified()
+    local box = inbox(inst)
+    offline(B)
+    local fr = B:frames("GlassChat", string.rep("i", 600), { sid = "1760000000402" })
+    B:deliver(fr[1])
+    inst.Rescan()
+    eq(heldBuffer(lib), nil, "an incomplete stream goes with the forget")
+    for i = 2, #fr do B:deliver(fr[i]) end
+    WoW.advance(31)
+    eq(#box, 0, "  and its later chunks are refused: no nonce left")
+end
+
+-- 14. G2 sends while the record is offline and the library still holds G1:
+--     never delivered as G1; delivered as G2 once the record names G2.
+do
+    local lib, inst, store, B = verified()
+    local box = inbox(inst)
+    offline(B)
+    switch(B, false)
+    B:send("GlassChat", "from G2", { sid = "1760000000403" })
+    WoW.advance(2)
+    eq(#box, 0, "G2's stream, admitted on the held G1, is not delivered as G1")
+    B.record.isOnline, B.record.playerGuid, B.record.characterName = true, G2, "Bravo"
+    inst.Rescan()
+    WoW.advance(1)
+    eq(senders(box), "from G2@" .. G2, "  delivered as G2 once the record names it")
+end
+
+-- 15. Admitted offline (held G1), the record names G2 before completion: a
+--     G1 stream stays G1's, a G2 stream is G2's.
+do
+    local lib, inst, store, B = verified({ host = { messages = true } })
+    local box = inbox(inst)
+    offline(B)
+    local f1 = B:frames("GlassChat", string.rep("1", 600), { sid = "1760000000404" })
+    switch(B, false)
+    local f2 = B:frames("GlassChat", string.rep("2", 600), { sid = "1760000000405" })
+    B:deliver(f1[1]); B:deliver(f2[1])
+    B.record.isOnline, B.record.playerGuid, B.record.characterName = true, G2, "Bravo"
+    for i = 2, #f1 do B:deliver(f1[i]) end
+    for i = 2, #f2 do B:deliver(f2[i]) end
+    eq(senders(box), string.rep("1", 600) .. "@" .. G1 .. "," .. string.rep("2", 600) .. "@" .. G2,
+       "each stream is delivered as the character its MAC binds")
+end
+
+-- 16. The held binding is a candidate, never a pass: a wrong MAC, or one
+--     made under a key we don't trust, is not delivered.
+do
+    local lib, inst, store, B = verified()
+    local box = inbox(inst)
+    offline(B)
+    B:send("GlassChat", "forged", { sid = "1760000000406", mac = string.rep("1", 32) })
+    B:send("GlassChat", "untrusted", { sid = "1760000000407", key = string.rep("c", 32) })
+    WoW.advance(31)
+    eq(#box, 0, "a wrong MAC or an untrusted key is refused under the held binding")
+end
+
+-- 17. A blank peer, bound by its proof, whose record goes offline before its
+--     first frame: GameFor forgets the id at admission (a stated loss).
+do
+    local store = { v = 1, key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", keyAt = 100,
+                    trusted = { [OTHER_KEY] = 100 }, selfProject = 18, selfRegion = 90, selfAt = 100 }
+    local lib, inst = session(store)
+    local box = inbox(inst)
+    local B = Peer.new({ blank = true })
+    inst.Rescan()
+    B:deliver(B:hello())                                -- proven: learned as G1
+    check(lib.state.peers[3] and lib.state.peers[3].guid == G1, "(a blank peer bound by its proof)")
+    B.record.isOnline = false
+    B:send("GlassChat", "too late", { sid = "1760000000409" })
+    eq(#box, 0, "its first frame after the record went offline is not delivered")
+    eq(lib.state.myNonce[3], nil, "  the id was forgotten at admission")
+    eq(heldBuffer(lib), nil, "  and nothing is held")
+end
+
+-- 18. A stream r7 admitted with no binding is not given one by this copy
+--     (no backfill of admission history; Codex round 2 on the logout loss).
+do
+    WoW.reset(); WoW.resetLibStub()
+    local old = loadCopy(fixtureCopy("LibAccountSync-r7.lua"), "GlassChat")
+    local store = { v = 1, key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", keyAt = 100,
+                    trusted = { [OTHER_KEY] = 100 }, selfProject = 18, selfRegion = 90, selfAt = 100 }
+    local inst = newHost(old, "GlassChat", store)
+    login()
+    WoW.advance(61)
+    local box = inbox(inst)
+    local B = Peer.new({})
+    inst.Rescan()
+    B:deliver(B:hello({ key = B.key }))
+    offline(B)
+    B:send("GlassChat", "r7's bye", { sid = "1760000000410" })
+    local buf = heldBuffer(old)
+    check(buf and buf.complete and buf.peer == nil, "r7 holds the bye, admitted with no binding")
+    loadLibrary("AltStable")                            -- this copy takes over
+    inst.Rescan()
+    WoW.advance(31)
+    eq(#box, 0, "this copy doesn't backfill its binding: lost, as under r7")
+end
+
 done("test_switch")

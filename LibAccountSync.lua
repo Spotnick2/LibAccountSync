@@ -28,7 +28,7 @@
 -- - lib.ready = MINOR is the last line: a copy that threw partway leaves every
 --   entry point inert.
 
-local MAJOR, MINOR = "LibAccountSync-1.0", 7
+local MAJOR, MINOR = "LibAccountSync-1.0", 8
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end   -- an equal or newer copy is already loaded
 
@@ -781,6 +781,18 @@ function I.GameFor(id, me, friends)
     return { id = id, guid = l.guid, name = l.name, realm = l.realm, faction = l.faction, proven = l.proven }
 end
 
+-- The binding the library holds for an id, as a copy (MINOR 8, #38): the one
+-- the last scan, route check or proven hello accepted (S.peers is written
+-- only from GameFor's results, never from a hint). Only ever a stream's
+-- admission binding, so a MAC candidate when Battle.net's record has nothing
+-- at admission: at a logout the record goes offline before the last frame
+-- lands. Never trust, never `verified`, never a destination.
+function I.HeldBinding(id)
+    local p = S.peers[id]
+    if type(p) ~= "table" or not IsGuid(p.guid) then return nil end
+    return { id = id, guid = p.guid, name = p.name, realm = p.realm, faction = p.faction, proven = p.proven }
+end
+
 -- Forget everything an id told us: it went offline, its binding changed, or
 -- Battle.net contradicts it. Whoever comes back proves itself afresh.
 -- Its complete streams are verified first, while our nonce for it is still
@@ -1336,8 +1348,11 @@ function I.OnData(id, text)
         -- (audit 2026-10-29, MINOR 6, #31). Nothing else evicts across senders.
         if total >= STREAMS_TOTAL and verified then total = total - I.EvictUnverified(1, 0) end
         if total >= STREAMS_TOTAL then S.refused[key] = time(); return end
+        -- With no binding now, the one we hold is the admission binding: what
+        -- it would have been a moment earlier (#38). `verified` stays the
+        -- record's word now, so it never makes room at the caps (#31).
         buf = { id = id, tag = tag, sid = tonumber(sid), sidText = sid, n = n, chunks = {}, have = 0,
-                bytes = 0, last = time(), verified = verified, peer = p }
+                bytes = 0, last = time(), verified = verified, peer = p or I.HeldBinding(id) }
         S.buffers[key] = buf
         I.ArmSettle(key, buf)
     end

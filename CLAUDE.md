@@ -4,22 +4,23 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
-**MINOR 7 is on this branch, not yet tagged** (#37: every delivery proven by its MAC, so a
+**Status: `r7` released** (tag on `c98eec5`, MINOR 7: #37, every delivery proven by its MAC, so a
 character switch the Battle.net record lags can't credit the new character's stream to the old
-one; agreed with Codex in 4 rounds, PLAN §10 "MINOR 7", with its stated losses). `r7` follows a
-two-account check in game.
-**Status: `r6` released** (tag on `edf8a7d`, MINOR 6: #31, the 2026-10-29 audit: the shared
-stream and byte caps make room for Battle.net-verified senders, the own-name check is gone, the
-friends list is walked lazily, the payload hash is cached; PLAN §10 "MINOR 6"). It passed the
-two-account check on 2026-11-14, build 70938: every payload delivered and verified byte for byte
-(PLAN §10 has the record). `r5` (`76fedef`, MINOR 5: #18 `messages = true` delivery for
+one; agreed with Codex in 4 rounds, PLAN §10 "MINOR 7", with its stated losses). It passed the
+two-account check on 2026-11-17, build 70938: every payload delivered and verified byte for byte.
+`r6` (`edf8a7d`, MINOR 6: #31, the 2026-10-29 audit: the shared stream and byte caps make room for
+Battle.net-verified senders, the own-name check is gone, the friends list is walked lazily, the
+payload hash is cached; PLAN §10 "MINOR 6") passed it on 2026-11-14, build 70938.
+`r5` (`76fedef`, MINOR 5: #18 `messages = true` delivery for
 independent messages, #17 one tag per snapshot kind on a shared store, the stream cap per
 (sender, tag); Codex-reviewed) and `r4` (`830017a`, #14 `SendTo`) passed it on 2026-10-16, build
 70425 (#25). `r3` (`6c888c5`, #7 client
 project/region on a blank first run, #8 `bit`-backed SHA-256) was validated by the two-account probe
 check; `r2` (`fdd4a72`) by GlassChat's pilot (#4). MINOR 1 was never tagged: its pilot copy,
-`cc92deb`, failed the first in-game check (#4). All six are frozen in `tests/fixtures/` (r2-r6 with
-manifests).
+`cc92deb`, failed the first in-game check (#4). All seven are frozen in `tests/fixtures/` (r2-r7 with
+manifests). **Open (#38):** a send from `PLAYER_LOGOUT` can be lost, held by ChatThrottleLib on the
+way out or, on arrival, admitted with no binding and dropped at the forget (PLAN §1); the probe
+traces it.
 Seven of the eleven `docs/PLAN.md` §7 measurements are done (#1); §7.11 has a first session (no
 handle reuse, PLAN §10) and its character-switch step is still owed. **Still owed (#9):** the §7.9 relay
 gate (needs a Battle.net friend as the test subject; a positive result brings the deferred relay

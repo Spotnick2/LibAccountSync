@@ -1093,3 +1093,12 @@ older copy delivered.
      before the next-frame drain (`Settle` drains first, so the pin is delivered), a new completion
      before that drain, a pinned stream evicted, a first handler wiping the session before the
      next pinned delivery, `Route` finding G2, and invalid-MAC buffers carried across an upgrade.
+
+In game on 2026-11-17, build 1.60.1.70938, two own accounts (Drucida sending, Karuzo receiving; the
+probe at `b3d28ea`, whose shipped files are the MINOR 7 merge `dd21bda`'s), and `r7` tagged on
+`c98eec5`, the same files:
+- `/fp steps las check`: all ten checks PASS, every payload delivered once and verified byte for
+  byte (Send and `SendTo` 1000 B; `Probe` 4000 B and `ProbeST` 500 B; four messages, each once).
+  `SendTo` to a GUID that isn't a peer sent nothing. Each result came back 8 to 13 s after its send.
+- The logout loss measured the same week (#38, §1's `PLAYER_LOGOUT` bullet) is not a MINOR 7
+  regression: r6's `TryDeliver` has no path for a frame admitted with no binding either.

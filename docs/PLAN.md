@@ -1156,3 +1156,13 @@ incomplete-at-forget losses explicit rather than widen MINOR 8; caller-held cand
 copy and `verified`, incomplete at the forget, G2 under a held G1, each stream its own character,
 a wrong MAC or untrusted key, the blank loss, no backfill of an r7 buffer); `test_probe`'s trace
 now shows the delivery, and a hinted id's bye as the no-candidate case. Seven mutations, all red.
+
+In game on 2026-11-17, build 1.60.1.70938, two own accounts on this build (the probe at
+`d536ef2`):
+- `/fp steps las logout` (Karuzo stays, Drucida leaves): both PASS. After the `/reload` the bye
+  verified against the record. After the logout to the character list it reached the library
+  with the record already offline, no GUID (as on r7), its MAC was checked against the held
+  binding (`candidates [none, Player-6933-00EF5101]`), verified, and was delivered at once,
+  1.2 s before the scan's forget. ChatThrottleLib wasn't queueing either time.
+- `/fp steps las check` (Karuzo sending this time): all ten checks PASS, every payload
+  delivered once and verified byte for byte.

@@ -4,6 +4,9 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
+**MINOR 8 is on this branch, not yet tagged** (#38: a frame admitted while its sender's record
+already reads offline takes the binding the library holds as its MAC candidate, so a goodbye sent
+at a logout is delivered; agreed with Codex in 2 rounds, PLAN §10 "MINOR 8").
 **Status: `r7` released** (tag on `c98eec5`, MINOR 7: #37, every delivery proven by its MAC, so a
 character switch the Battle.net record lags can't credit the new character's stream to the old
 one; agreed with Codex in 4 rounds, PLAN §10 "MINOR 7", with its stated losses). It passed the
@@ -18,9 +21,9 @@ independent messages, #17 one tag per snapshot kind on a shared store, the strea
 project/region on a blank first run, #8 `bit`-backed SHA-256) was validated by the two-account probe
 check; `r2` (`fdd4a72`) by GlassChat's pilot (#4). MINOR 1 was never tagged: its pilot copy,
 `cc92deb`, failed the first in-game check (#4). All seven are frozen in `tests/fixtures/` (r2-r7 with
-manifests). **Open (#38):** a send from `PLAYER_LOGOUT` can be lost, held by ChatThrottleLib on the
-way out or, on arrival, admitted with no binding and dropped at the forget (PLAN §1); the probe
-traces it.
+manifests). **#38:** a send from `PLAYER_LOGOUT` was lost on arrival in r7 (admitted with no
+binding, dropped at the forget; MINOR 8 fixes it); ChatThrottleLib queueing it was measured once
+and not reproduced (PLAN §1).
 Seven of the eleven `docs/PLAN.md` §7 measurements are done (#1); §7.11 has a first session (no
 handle reuse, PLAN §10) and its character-switch step is still owed. **Still owed (#9):** the §7.9 relay
 gate (needs a Battle.net friend as the test subject; a positive result brings the deferred relay
@@ -106,7 +109,8 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
   `I.FriendGameIDs`, which copy plain fields and mark a record holding a secret `unknown`;
   `test_secrets` greps that nothing else touches a raw record.
 - A sender is always Blizzard's `senderID`; **every** stream needs its MAC (MINOR 7, #37), bound
-  to our nonce and the GUID it is credited to: the binding now, else the one at admission. A
+  to our nonce and the GUID it is credited to: the binding now, else the one at admission (when the record had
+  nothing then, the binding the library held, copied: MINOR 8, #38). A
   forget verifies an id's waiting streams first and pins the ones that pass; sids are monotonic per (tag, sender GUID) for a
   snapshot tag, and delivered at most once per (tag, sender GUID) for a messages tag (a 256-sid
   window, older refused).
@@ -119,7 +123,7 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
 ```
 pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua + test_wirelog.py
 pwsh tests/run.ps1 -KitDev                               # against the ..\WowTestKit working copy
-& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 201)
+& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 208)
 ```
 - The test scaffolding is WowTestKit (`C:\Projects\WoW\WowTestKit`; its README is the reference)
   at the commit and client build `tests\kit.pin` names. `tests\run.ps1` puts that commit in

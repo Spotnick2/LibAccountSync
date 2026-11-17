@@ -176,13 +176,21 @@ Each tag's delivery has one of two meanings, chosen at `New`:
       with no binding, its MAC had no candidate, and the forget dropped it (r6 has no path
       for that either). An id forgotten before the frame landed fits the log too (Codex
       round 1 on the logout loss).
-    - Open: why ChatThrottleLib queued one account's bye ~70 s after login, and which of the
-      two readings holds. The probe now traces both: ChatThrottleLib's state before and after
-      the send and the client sends it tried; a control frame on the probe's own prefix after
-      the bye; and on the receiver the record and the library's binding, nonces, admission,
-      MAC check, forget and delivery for each bye. A fix waits for that trace (the id's last
-      known character as a MAC candidate is the sound option Codex reviewed).
-  - Until then, a host must not depend on a goodbye: a timeout has to end a sender that left
+  - **Traced 2026-11-17, build 70938, r7** (Drucida sending, the probe tracing both sides): at
+    the logout to the character list ChatThrottleLib wasn't queueing, the client sent the frame
+    during the event, and it arrived 0.8 s later with a control frame sent after it. But the
+    receiver's record of the sender already read offline, no GUID, as the frame reached the
+    library, while the library still held the sender's Battle.net binding and the very nonce
+    its MAC used: admitted with no binding, no MAC candidate, dropped by the scan's forget 1.4 s
+    later. The first reading holds: Battle.net's offline reaches the other client before (or
+    with) the last frame. The `/reload` round was delivered in 0.6 s.
+  - **MINOR 8 (#38):** such a stream takes the binding the library holds for the id as its
+    admission binding (§5.3), so its MAC verifies and it is delivered at once. Still lost: a
+    stream not complete when the id is forgotten (keep a goodbye to one frame: 180 bytes once
+    encoded, `BODY_FIRST`), a blank-presence peer's first frame after its record went offline, and a frame
+    ChatThrottleLib queued (measured once, 2026-11-14, ~70 s after login, not reproduced; the
+    probe logs its state at every bye).
+  - So a host still must not depend on a goodbye: a timeout has to end a sender that left
     without one, as AltStable's 50 s silence does.
 - **Reasons, a frozen enum:** `disabled`, `no-peers`, `too-large`, `not-ready`, `offline`,
   `no-route`.
@@ -229,8 +237,9 @@ sync).
     or the one when the stream was admitted, so a sender who sends and logs out (or switches
     character) straight away still gets delivered as itself.
   - Each call gets a fresh table, so a host can't change library state through it.
-  - `sender.proven` says how ownership was established:
-    - `"bnet"`: Battle.net shows the id as ours;
+  - `sender.proven` says how the binding the MAC verified against was established, not that
+    it still holds now (a stream delivered after its sender went offline keeps it; MINOR 7, 8):
+    - `"bnet"`: Battle.net showed the id as ours;
     - `"key"`: its hello carried a trusted household key;
     - `"proof"`: an HMAC proof between blank presences.
 - **`sid`** is monotonic per sender (§5.2). It lets a host order snapshots that arrive from
@@ -564,6 +573,11 @@ cut to 32 hex, on chunk 1.
     hello), then the binding when the stream was admitted. An old character's last stream stays
     its own after the record names the next one; a new character's stream waits until the record
     or its own proof hello names it;
+  - a stream admitted on our nonce while the record has nothing (offline, blank) takes as its
+    admission binding the one the library holds for that id (`S.peers`, written only from
+    Battle.net or a proven hello), copied (MINOR 8, #38): at a logout Battle.net's offline
+    reaches us before the sender's last frame. It is a MAC candidate and nothing else: not
+    `verified` for the caps, never trust, never a destination;
   - a sender that isn't verified may fill a buffer only if we have sent that id our nonce. The
     caps bound the memory;
   - **a complete stream that doesn't verify yet is kept, not dropped.** It waits for up to 30 s,
@@ -578,7 +592,9 @@ cut to 32 hex, on chunk 1.
     our `/reload`, the library switched off and on, a Battle.net disconnect, a forget of that id);
     first contact waits for the key-bearing hello instead of Battle.net's word; a stream the old
     character sent that is admitted only after the record names the new one; and complete streams
-    that can't verify hold their slots up to 30 s (the full list: §10, "MINOR 7").
+    that can't verify hold their slots up to 30 s (the full list: §10, "MINOR 7"). Still lost
+    after MINOR 8: a stream incomplete when its id is forgotten, and a blank peer's (bound by a
+    hello) first frame after its record went offline, which forgets the id before admission.
 
   Together these let a blank-presence peer's data land however it interleaves with the last
   hello of the handshake: some chunks before the hello, or every chunk before it (Battle.net is
@@ -1102,3 +1118,51 @@ probe at `b3d28ea`, whose shipped files are the MINOR 7 merge `dd21bda`'s), and 
   `SendTo` to a GUID that isn't a peer sent nothing. Each result came back 8 to 13 s after its send.
 - The logout loss measured the same week (#38, §1's `PLAYER_LOGOUT` bullet) is not a MINOR 7
   regression: r6's `TryDeliver` has no path for a frame admitted with no binding either.
+
+### MINOR 8: the held binding at admission (#38)
+Measured 2026-11-17 on r7 (§1, `PLAYER_LOGOUT`): at a logout to the character list the other
+client sees the sender's record go offline before its last frame lands. The frame is admitted on
+our nonce with no binding (`GameFor` is nil for an offline record), so MINOR 7's MAC check has no
+candidate, and the scan's forget drops it. The library still held the sender's Battle.net
+binding in `S.peers`, and our nonce for the id was the one the MAC used.
+
+**Change:** at admission, when `GameFor(id)` is nil and the stream is admitted on our nonce, its
+admission binding (`buf.peer`) is a copy of `S.peers[id]` (`I.HeldBinding`), when there is one.
+`verified` is still computed from `GameFor` alone, before the fallback. Verify, `TryDeliver` and
+`ForgetId` already try `buf.peer`, so nothing else changes: delivery still needs the MAC to verify
+under a trusted key and our current nonce, for that candidate's GUID.
+- `S.peers` is written only from `GameFor`'s results (Scan, `Route`, `OnHello`): Battle.net's
+  word or a key/proof-proven hello, never an elimination hint. It is what `buf.peer` would have
+  been had the frame landed a moment earlier. No new state, nothing new to clear: the nonce that
+  admission needs goes with every forget and every session wipe.
+- A copy: a later change to the live binding never rewrites a stream's admission binding.
+- An r7 buffer admitted with `peer = nil` is not backfilled: it verifies against a later binding
+  or is lost, as under r7.
+
+**Still lost (stated):** a stream not complete when its id is forgotten; a blank-presence peer's
+first frame after its record went offline (`GameFor` forgets the id before admission, taking the
+nonce; recovering it would need a reviewed two-phase transition, and a captured nonce used after
+the forget would break the current-nonce rule); a frame ChatThrottleLib queued at the event.
+
+**Codex, round 1** (before the trace): AGREE WITH CHANGES: the reading was reachable but
+unproven, an id forgotten first fitted too; instrument first. The id's last known character as a
+candidate is sound if fed only from accepted bindings, used only to verify, copied, and cleared
+with the nonce. **Round 2** (on the trace and this proposal): AGREE. The trace settles the first
+reading (the stream was held complete with no candidate; a forget before it would have refused
+admission). No `S.peers` write path should be excluded. Compute `verified` before the fallback;
+keep `proven` as the binding's provenance (§2 wording clarified); keep the blank first-frame and
+incomplete-at-forget losses explicit rather than widen MINOR 8; caller-held candidates for
+`ForgetId` are sound but not needed here. Tests: `test_switch` 11-18 (the measured sequence,
+copy and `verified`, incomplete at the forget, G2 under a held G1, each stream its own character,
+a wrong MAC or untrusted key, the blank loss, no backfill of an r7 buffer); `test_probe`'s trace
+now shows the delivery, and a hinted id's bye as the no-candidate case. Seven mutations, all red.
+
+In game on 2026-11-17, build 1.60.1.70938, two own accounts on this build (the probe at
+`d536ef2`):
+- `/fp steps las logout` (Karuzo stays, Drucida leaves): both PASS. After the `/reload` the bye
+  verified against the record. After the logout to the character list it reached the library
+  with the record already offline, no GUID (as on r7), its MAC was checked against the held
+  binding (`candidates [none, Player-6933-00EF5101]`), verified, and was delivered at once,
+  1.2 s before the scan's forget. ChatThrottleLib wasn't queueing either time.
+- `/fp steps las check` (Karuzo sending this time): all ten checks PASS, every payload
+  delivered once and verified byte for byte.

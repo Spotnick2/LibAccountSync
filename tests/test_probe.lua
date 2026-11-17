@@ -599,19 +599,34 @@ check(logHas("[Player-1-0000000B, Player-1-0000000B]: the MAC verified for no ca
 WoW.advance(31)
 check(logHas("trace: 3|Probe|1760000000906 dropped at the end of its wait"), "  then is dropped at the end of its wait")
 eq(T.Byes(), heard + 1, "  undelivered")
--- The logout measured on 2026-11-14: the record already reads offline when
--- the frame lands. Admitted on our nonce with no binding, the MAC has no
--- candidate, and the forget drops it (hypothesis (a), as the library stands).
+-- The logout measured on 2026-11-14 and 2026-11-17: the record already reads
+-- offline when the frame lands. Since MINOR 8 (#38) the binding the library
+-- holds is its admission binding, so its MAC verifies and it is delivered.
 B.record.isOnline = false
 B:send("Probe", bye(1760000005), { sid = "1760000000905" })
 check(logHas("trace: bye 3|Probe|1760000000905 reaches the library: record offline Player-1-0000000B; peer Player-1-0000000B/bnet"),
       "a frame landing after the record went offline: the trace says so")
-check(logHas("trace: bye 3|Probe|1760000000905 after admission: held (complete, admitted as -)"), "  admitted with no binding")
-check(logHas("candidates [none, none]: no candidate to check"), "  its MAC with no candidate to check")
+check(logHas("candidates [none, Player-1-0000000B]: verified as Player-1-0000000B"), "  its MAC checked against the held binding")
+check(logHas("trace: bye 3|Probe|1760000000905 after admission: finished"), "  and delivered at once")
+eq(T.Byes(), heard + 2, "  counted as a delivered bye")
+heard = heard + 1
 T.Sync.Rescan()
 check(logHas("trace: forget id 3, new binding -: record offline"), "the forget is traced")
-check(logHas("trace:   3|Probe|1760000000905: not held"), "  and the bye dropped with it")
+-- An id we only sent a nonce to (a hint) has no binding to hold: its bye has
+-- no candidate, and the forget drops it.
+local H = Peer.new({ id = 8, blank = true, guid = "Player-1-00000088", name = "Hinted" })
+T.Sync.Rescan()
+check(LibStub("LibAccountSync-1.0").state.myNonce[8], "(id 8 hinted: our nonce went to it)")
+H:send("Probe", bye(1760000007), { sid = "1760000000907" })
+check(logHas("trace: MAC check of 8|Probe|1760000000907 under our nonce "), "a hinted id's bye is checked")
+check(logHas("candidates [none, none]: no candidate to check"), "  with no candidate to check")
+check(logHas("trace: bye 8|Probe|1760000000907 after admission: held (complete, admitted as -)"), "  admitted with no binding")
+H.record.isOnline = false
+T.Sync.Rescan()
+check(logHas("trace: forget id 8, new binding -: record offline"), "its forget is traced")
+check(logHas("trace:   8|Probe|1760000000907: not held"), "  and the bye dropped with it")
 eq(T.Byes(), heard + 1, "  undelivered")
+WoW.bn.accounts[8] = nil
 B.record.isOnline = true
 T.Sync.Rescan()
 check(logHas("trace: new nonce "), "a new nonce for the id is traced")
@@ -630,7 +645,7 @@ eq(T.Pings(), pingsNow, "  not as a ping")
 -- From an id the library can't admit (its record gone before the frame landed).
 B:send("Probe", bye(1760000003), { sid = "1760000000903", id = 7 })
 eq(T.Byes(), heard + 1, "a bye the library refuses is not delivered")
-eq(T.RawByes(), raw + 5, "  but its frame is counted as received (the trace's three byes above, and this one)")
+eq(T.RawByes(), raw + 6, "  but its frame is counted as received (the trace's four byes above, and this one)")
 local pings = T.Pings()
 WoW.fire("BN_CHAT_MSG_ADDON", "OtherAddon", "PING|x|1", "WHISPER", 3)
 eq(T.Pings(), pings, "another addon's prefix is not a ping")
@@ -643,7 +658,7 @@ S.Next()
 S.Run()                                            -- 2: armed over there, Ready marks; 3: waiting
 S.Poll()
 eq(rec.at, 3, "the wait holds while no bye has come")
-B:send("Probe", bye(1760000002), { sid = "1760000000902" })
+B:send("Probe", bye(1760000002), { sid = "1760000000912" })
 S.Poll()
 eq(outcome(3), "PASS", "a bye after the /reload: " .. detail(3))
 check(detail(3):find("1 delivered, 1 raw frame(s) received", 1, true), "  delivered and received: " .. detail(3))

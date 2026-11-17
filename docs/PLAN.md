@@ -1158,7 +1158,7 @@ a wrong MAC or untrusted key, the blank loss, no backfill of an r7 buffer); `tes
 now shows the delivery, and a hinted id's bye as the no-candidate case. Seven mutations, all red.
 
 In game on 2026-11-17, build 1.60.1.70938, two own accounts on this build (the probe at
-`d536ef2`):
+`d536ef2`), and `r8` tagged on `f030b5a`, the same shipped files:
 - `/fp steps las logout` (Karuzo stays, Drucida leaves): both PASS. After the `/reload` the bye
   verified against the record. After the logout to the character list it reached the library
   with the record already offline, no GUID (as on r7), its MAC was checked against the held

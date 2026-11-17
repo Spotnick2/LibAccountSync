@@ -4,10 +4,11 @@ LibAccountSync-1.0: an embedded LibStub library for **WoW: Forever 1.60.1** (Int
 Lua 5.1). It lets an addon send small messages to the player's own other WoW accounts on the same
 Battle.net account, and receive them, with ownership proven first. Single owner (Spotnick).
 
-**MINOR 8 is on this branch, not yet tagged** (#38: a frame admitted while its sender's record
-already reads offline takes the binding the library holds as its MAC candidate, so a goodbye sent
-at a logout is delivered; agreed with Codex in 2 rounds, PLAN §10 "MINOR 8").
-**Status: `r7` released** (tag on `c98eec5`, MINOR 7: #37, every delivery proven by its MAC, so a
+**Status: `r8` released** (tag on `f030b5a`, MINOR 8: #38, a frame admitted while its sender's
+record already reads offline takes the binding the library holds as its MAC candidate, so a
+goodbye sent at a logout is delivered; agreed with Codex in 2 rounds, PLAN §10 "MINOR 8"). It
+passed the two-account check and the logout procedure on 2026-11-17, build 70938.
+`r7` (`c98eec5`, MINOR 7: #37, every delivery proven by its MAC, so a
 character switch the Battle.net record lags can't credit the new character's stream to the old
 one; agreed with Codex in 4 rounds, PLAN §10 "MINOR 7", with its stated losses). It passed the
 two-account check on 2026-11-17, build 70938: every payload delivered and verified byte for byte.
@@ -20,7 +21,7 @@ independent messages, #17 one tag per snapshot kind on a shared store, the strea
 70425 (#25). `r3` (`6c888c5`, #7 client
 project/region on a blank first run, #8 `bit`-backed SHA-256) was validated by the two-account probe
 check; `r2` (`fdd4a72`) by GlassChat's pilot (#4). MINOR 1 was never tagged: its pilot copy,
-`cc92deb`, failed the first in-game check (#4). All seven are frozen in `tests/fixtures/` (r2-r7 with
+`cc92deb`, failed the first in-game check (#4). All eight are frozen in `tests/fixtures/` (r2-r8 with
 manifests). **#38:** a send from `PLAYER_LOGOUT` was lost on arrival in r7 (admitted with no
 binding, dropped at the forget; MINOR 8 fixes it); ChatThrottleLib queueing it was measured once
 and not reproduced (PLAN §1).

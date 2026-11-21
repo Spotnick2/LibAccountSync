@@ -516,10 +516,14 @@ never data.
   realm field and the proof binds `""`. Nothing breaks: the receiver binds the realm as the
   hello carries it, never its own, and no ownership decision reads the realm. The binding loses
   nothing either, since the GUID still carries the server field. A hello-proven sender's
-  `realm` reads nil (`test_handshake` 14g). Still to measure: Battle.net's `realmName`,
-  `realmDisplayName` and 71037's `hasRealmInfo` for our other account (`/fp las region`). If
-  they're `""`, a Battle.net-proven sender's `realm` would read `""` where a hello-proven one
-  reads nil. AltStable wants `""` read as nil, which would be a MINOR.
+  `realm` reads nil (`test_handshake` 14g). **Measured** 2026-11-20 21:13, client 71037 (it has
+  `IsGameAccountOnSameRealm`), Drucida with Zoruka on the other account (`/fp las region`): every
+  Battle.net game record, ours and the other account's included, has `realmName`,
+  `realmDisplayName` and `realmID` nil, and `hasRealmInfo` is true for every online WoW
+  presence. So a Battle.net-proven sender's `realm` reads nil too, as AltStable wants, and no
+  MINOR is needed. Battle.net still verified the other account (`id 3 ... (bnet)`), and the
+  GUIDs keep their server field. `IsGameAccountOnSameRealm` agrees with it: true for the two
+  friends whose GUID shares Drucida's `6933`, false for every other one.
 
 **Nonces:**
 - Ours is fixed per id for the session, and cleared when that id goes offline or its binding

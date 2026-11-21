@@ -47,11 +47,13 @@ adversarial review first.
 - `C:\Projects\WoW\LibGlass` (one runtime file, instances, upgrade tests) and
   `C:\Projects\WoW\LibGroupBuffs` (consumers, version fixtures): the templates.
 - `C:\Projects\WoW\References\Docs\PORTING-TBC-TO-FOREVER.md` and
-  `C:\Projects\WoW\References\Forever\api\forever-api-1.60.1.70938.md`: client facts and the API dump. From
-  70450 to 70938 the documented changes touching Battle.net are an optional `subIcon` on
-  `BNetGameAccountInfo` (the readers copy a fixed field list) and the new
-  `C_BattleNet.GetDefaultTitleWhisperTarget`; nothing this library, its probe or its stubs use
-  changed (#34; 70235 to 70450, #27).
+  `C:\Projects\WoW\References\Forever\api\forever-api-1.60.1.71037.md`: client facts and the API dump. From
+  70938 to 71037 the documented changes touching Battle.net are `hasRealmInfo` on
+  `BNetGameAccountInfo` and the new `C_BattleNet.IsGameAccountOnSameRealm` (the probe logs both);
+  the readers copy a fixed field list, so nothing the library uses changed. Since the 2026-11-20
+  server hotfix the realm is hidden: `GetRealmName()` is `""` and Battle.net's realm fields are
+  nil (#51, PLAN §5.1). Earlier: `subIcon` and `GetDefaultTitleWhisperTarget` (70450 to 70938,
+  #34; 70235 to 70450, #27).
 
 ## Layout
 
@@ -124,7 +126,7 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
 ```
 pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua + test_wirelog.py
 pwsh tests/run.ps1 -KitDev                               # against the ..\WowTestKit working copy
-& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 214)
+& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 215)
 ```
 - The test scaffolding is WowTestKit (`C:\Projects\WoW\WowTestKit`; its README is the reference)
   at the commit and client build `tests\kit.pin` names. `tests\run.ps1` puts that commit in

@@ -1,5 +1,5 @@
 # WowTestKit for these tests: the commit, and the client build to test against.
-# build: the build this library was last measured on (the r6 check, 2026-11-14), the newest the kit has.
-sha=6df5d9c4eafa3613ab3c098886ca7c785e64c120
-build=70938
+# build: the build this library was last measured on (the realm check, 2026-11-20), the newest the kit has.
+sha=a9b2ee01084b9a8e05c11a72edb59a1245e428bc
+build=71037
 api=2

@@ -443,12 +443,15 @@ end
 do
     local lib, inst, store = session(nil, { before = function() WoW.player.realm = "" end })
     local B = Peer.new({ realm = "" })
+    -- As measured on 71037 (PLAN 5.1): Battle.net's realm fields are nil.
+    B.record.realmName, B.record.hasRealmInfo = nil, true
     inst.Rescan()
     local ours = B:ourHello()
     check(ours ~= nil, "with the realm hidden, a verified own account still gets a hello")
     eq(ours.realm, "", "  its realm field empty")
     B:deliver(B:hello({ key = B.key }))
     eq(names(inst), "Karuzo:bnet", "  and its hello with an empty realm pairs")
+    eq(inst.Peers()[1].realm, nil, "  its realm reads nil, as Battle.net gives it")
     local answer = B:ourHello()
     eq(answer.proof, proofFor(store.key, B.nonce, answer.nonce, "Malas", WoW.player.guid, "", 18, 90),
        "  our proof binds the empty realm")

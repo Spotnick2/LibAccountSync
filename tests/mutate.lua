@@ -165,6 +165,8 @@ local M = {
         'or not IsField(faction or "", 16) or not IsField(realm or "", 64) or (realm or "") == "" then' } } },
     { "realm: no hello with the realm hidden", { { 'if not IsField(name, 96) or not IsField(realm, 64) or',
         'if not IsField(name, 96) or not IsField(realm, 64) or realm == "" or' } } },
+    { "realm: a Battle.net sender's missing realm reads empty", { { "realm = g.realmName or g.realmDisplayName,",
+        'realm = g.realmName or g.realmDisplayName or "",' } } },
     { "realm: a hidden realm is learned as empty", { { 'realm = realm ~= "" and realm or nil, proven = how }',
         'realm = realm, proven = how }' } } },
     -- The proof and the MAC (§5.1, §5.3)

@@ -36,14 +36,17 @@ local PROBE_PREFIX = "LASProbe"
 
 local Probe = ForeverProbe:Module("LibAccountSyncProbe", { api = 1, cmd = "las" })
 
-local function Where()
-    local name = UnitName("player") or "?"
-    local realm = GetRealmName() or "?"
-    return name .. "-" .. realm
-end
-
 -- Is it a secret? Asked before ANY comparison or truth test of a client value.
 local function IsS(v) return issecretvalue ~= nil and issecretvalue(v) == true end
+
+-- "Name-Realm", or the bare name: the realm is "" since the 2026-11-20 hotfix (#51).
+local function Where()
+    local name = UnitName("player")
+    if IsS(name) or type(name) ~= "string" or name == "" then name = "?" end
+    local realm = GetRealmName()
+    if IsS(realm) or type(realm) ~= "string" or realm == "" then return name end
+    return name .. "-" .. realm
+end
 
 local V = Probe.Show   -- a secret reads <secret>, a string is quoted
 
@@ -292,7 +295,8 @@ local function Hash()
 end
 
 local GAME_FIELDS = { "isOnline", "clientProgram", "isInCurrentRegion", "characterName", "playerGuid",
-                      "wowProjectID", "regionID", "factionName", "realmName", "gameAccountID" }
+                      "wowProjectID", "regionID", "factionName", "realmName", "realmDisplayName", "realmID",
+                      "hasRealmInfo", "gameAccountID" }   -- the realm three: #51 (hasRealmInfo since 71037)
 
 local function Record(label, g)
     if IsS(g) then Log("  " .. label .. ": the record itself is <secret>"); return end
@@ -318,6 +322,10 @@ local function Ids()
         local ok, g = pcall(C_BattleNet.GetGameAccountInfoByID, id)
         if ok and (IsS(g) or type(g) == "table") then
             Record("id " .. id, g)
+            if C_BattleNet.IsGameAccountOnSameRealm then              -- 71037 (#51)
+                local okS, same = pcall(C_BattleNet.IsGameAccountOnSameRealm, id)
+                Log("    IsGameAccountOnSameRealm -> " .. (okS and V(same) or "error"))
+            end
             if IsBlank(g) then blank = blank + 1 end
         end
     end

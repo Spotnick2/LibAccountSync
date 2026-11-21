@@ -124,7 +124,7 @@ EMBEDDED-LIBRARIES §5, as applied here (§4 of the plan):
 ```
 pwsh tests/run.ps1                                       # luac -p + every tests/test_*.lua + test_wirelog.py
 pwsh tests/run.ps1 -KitDev                               # against the ..\WowTestKit working copy
-& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 208)
+& 'C:\Program Files (x86)\Lua\5.1\lua.exe' tests\mutate.lua [filter]   # mutation run (10-15 min for all 214)
 ```
 - The test scaffolding is WowTestKit (`C:\Projects\WoW\WowTestKit`; its README is the reference)
   at the commit and client build `tests\kit.pin` names. `tests\run.ps1` puts that commit in

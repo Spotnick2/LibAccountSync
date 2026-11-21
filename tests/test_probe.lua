@@ -684,4 +684,19 @@ for _, l in ipairs(FP.lines) do if l.m == "LibAccountSyncProbe" and l.text:find(
 check(inConsole, "and is in the console")
 eq(#chat, 0, "still nothing in chat")
 
+-- 13. The realm hidden (2026-11-20 hotfix, #51): GetRealmName() is "". The
+-- stamp is the bare name, and the record dump shows the realm fields and
+-- 71037's IsGameAccountOnSameRealm.
+WoW.player.realm = ""
+las("status")
+check(DB.log[#DB.log]:match("#%d+ %d%d:%d%d:%d%d Malas   "),
+      "with the realm hidden, the stamp is the bare name: " .. tostring(DB.log[#DB.log]))
+check(not logHas("Malas- "), "  never Name- with nothing after it")
+WoW.bn.accounts[3].hasRealmInfo = false
+C_BattleNet.IsGameAccountOnSameRealm = function(id) return id == 3 end
+las("ids")
+C_BattleNet.IsGameAccountOnSameRealm = nil
+check(logHas("realmDisplayName=nil realmID=nil hasRealmInfo=false"), "the dump shows the realm fields")
+check(logHas("    IsGameAccountOnSameRealm -> true"), "  and IsGameAccountOnSameRealm, where the client has it")
+
 done("test_probe")

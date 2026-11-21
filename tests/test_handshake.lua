@@ -437,6 +437,37 @@ do
     eq(names(inst), "", "a name with a suffix is not believed, even with the bare name's proof")
 end
 
+-- 14g. The realm hidden (2026-11-20 server hotfix, #51): GetRealmName() is
+--      "" on both sides. The hello carries the empty field, the proof binds
+--      it as the hello carries it, and both paths still pair.
+do
+    local lib, inst, store = session(nil, { before = function() WoW.player.realm = "" end })
+    local B = Peer.new({ realm = "" })
+    inst.Rescan()
+    local ours = B:ourHello()
+    check(ours ~= nil, "with the realm hidden, a verified own account still gets a hello")
+    eq(ours.realm, "", "  its realm field empty")
+    B:deliver(B:hello({ key = B.key }))
+    eq(names(inst), "Karuzo:bnet", "  and its hello with an empty realm pairs")
+    local answer = B:ourHello()
+    eq(answer.proof, proofFor(store.key, B.nonce, answer.nonce, "Malas", WoW.player.guid, "", 18, 90),
+       "  our proof binds the empty realm")
+end
+do
+    local store = seasoned()
+    local lib, inst = session(store, { before = function() WoW.player.realm = "" end })
+    WoW.bn.blank = true
+    local B = Peer.new({ blank = true, realm = "" })
+    inst.Rescan()
+    eq(B:ourHello().realm, "", "both blank and the realm hidden: our hello's realm is empty")
+    B:deliver(B:hello())                     -- its proof over our nonce, binding ""
+    eq(names(inst), "Karuzo:proof", "  its proof binding the empty realm makes it a peer")
+    eq(inst.Peers()[1].realm, nil, "  whose realm reads nil, not empty")
+    local answer = B:ourHello()
+    eq(answer.proof, proofFor(store.key, B.nonce, answer.nonce, "Malas", WoW.player.guid, "", 18, 90),
+       "  and we prove ourselves over its nonce, binding the empty realm")
+end
+
 -- 15. Our presence blank and our game never seen: fail closed, no hellos.
 do
     local lib, inst, store = session(nil, { before = function() WoW.bn.blank = true; WoW.noClientConstants() end })

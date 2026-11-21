@@ -511,6 +511,16 @@ never data.
   It does **not** bind the faction: a host's `sender.faction` for a key- or proof-proven peer is
   what the hello claims (#31). Binding it would change the proof's input, which is a new wire.
 
+  **The realm is hidden** since a server hotfix on 2026-11-20: `GetRealmName()` returns `""`
+  (#51; `PORTING-TBC-TO-FOREVER.md`, "The realm is hidden"). The hello then carries an empty
+  realm field and the proof binds `""`. Nothing breaks: the receiver binds the realm as the
+  hello carries it, never its own, and no ownership decision reads the realm. The binding loses
+  nothing either, since the GUID still carries the server field. A hello-proven sender's
+  `realm` reads nil (`test_handshake` 14g). Still to measure: Battle.net's `realmName`,
+  `realmDisplayName` and 71037's `hasRealmInfo` for our other account (`/fp las region`). If
+  they're `""`, a Battle.net-proven sender's `realm` would read `""` where a hello-proven one
+  reads nil. AltStable wants `""` read as nil, which would be a MINOR.
+
 **Nonces:**
 - Ours is fixed per id for the session, and cleared when that id goes offline or its binding
   drops (`Core.lua` 975-979).

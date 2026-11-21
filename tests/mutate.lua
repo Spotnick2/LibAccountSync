@@ -160,6 +160,13 @@ local M = {
                                           'and type(seen) == "number" then' } } },
     { "no shared-key split", { { "if not mine or not theirGuid or mine >= theirGuid then return end",
                                  "if true then return end" } } },
+    -- The realm hidden since the 2026-11-20 hotfix (#51; test_handshake 14g)
+    { "realm: an empty realm is refused on arrival", { { 'or not IsField(faction or "", 16) or not IsField(realm or "", 64) then',
+        'or not IsField(faction or "", 16) or not IsField(realm or "", 64) or (realm or "") == "" then' } } },
+    { "realm: no hello with the realm hidden", { { 'if not IsField(name, 96) or not IsField(realm, 64) or',
+        'if not IsField(name, 96) or not IsField(realm, 64) or realm == "" or' } } },
+    { "realm: a hidden realm is learned as empty", { { 'realm = realm ~= "" and realm or nil, proven = how }',
+        'realm = realm, proven = how }' } } },
     -- The proof and the MAC (§5.1, §5.3)
     { "proof without project and region", {
         { '.. "|" .. guid .. "|" .. realm .. "|" .. tostring(project) .. "|" .. tostring(region)):sub(1, 32)',
@@ -285,6 +292,11 @@ local M = {
     -- The probe (test_probe; it skips, so it is never red, without ..\ForeverProbe)
     { "probe: lines go to chat", { { '    Probe:Say(("%s %s %s"):format(date("%H:%M:%S"), Where(), text))',
         '    Probe:Say(("%s %s %s"):format(date("%H:%M:%S"), Where(), text)); print(text)' } }, PROBE },
+    { "probe: the stamp is Name- with the realm hidden", {
+        { 'if IsS(realm) or type(realm) ~= "string" or realm == "" then return name end',
+          'if IsS(realm) or type(realm) ~= "string" then return name end' } }, PROBE },
+    { "probe: the dump leaves out hasRealmInfo", { { '"hasRealmInfo", "gameAccountID" }', '"gameAccountID" }' } }, PROBE },
+    { "probe: IsGameAccountOnSameRealm isn't logged", { { "if C_BattleNet.IsGameAccountOnSameRealm then", "if false then" } }, PROBE },
     { "probe: the log isn't bound", { { "        Probe:UseLog(db.log, MAX_LOG)", "" } }, PROBE },
     { "probe: clear replaces the log", { { 'function() Probe:ClearLog(); Log("log cleared") end',
         'function() LibAccountSyncProbeDB.log = {}; Log("log cleared") end' } }, PROBE },
